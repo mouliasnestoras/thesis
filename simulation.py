@@ -14,6 +14,7 @@ class Product:
     belt_location : int
     # additional attributes for print messages
     product_in_order : int
+    product_type : int
 
 @dataclass
 class Job:
@@ -22,7 +23,10 @@ class Job:
     destination : List[int]
     # additional attributes for print messages
     order_id : int
+    product_type : int
     product_in_order : int
+    
+
 
 @dataclass
 class Robot:
@@ -31,6 +35,7 @@ class Robot:
     loaded : int = 0
     isassigned : bool = False
     current_job : Job = None
+    going_home : bool = False
 
 def parse(filename: str) -> List[Product]:
     """
@@ -72,7 +77,8 @@ def parse(filename: str) -> List[Product]:
                         product_id=product_id_counter,
                         order_id=order_index,
                         belt_location=belt_location,
-                        product_in_order=product_index
+                        product_in_order=product_index,
+                        product_type=pt
                     ))
                     product_id_counter += 1
 
@@ -113,18 +119,37 @@ def schedule_jobs(solution: List[List[int]], products: List["Product"]) -> List[
             robot_id=robot_id,
             destination=[belt_location, pallet_location],
             order_id=product.order_id,
-            product_in_order=product.product_in_order
+            product_in_order=product.product_in_order,
+            product_type=product.product_type
         )
         jobs.append(job)
 
+        
     return jobs
 
 
-def assign_job(robot_id: int)-> Job:
-    print(len(jobs))
+def assign_job(robot):
     for job in jobs:
-        if job.robot_id == robot_id:
-            return job
+        if job.robot_id == robot.id:
+            robot.current_job = job
+            robot.loaded = 0
+            robot.isassigned = True
+            robot.going_home = False
+
+            print(
+                f"Robot {robot.id} assigned job to "
+                f"pickup product #{job.product_in_order} of order {job.order_id} "
+                f"(type {job.product_type}) from belt {job.destination[0]} "
+                f"and deliver to pallet {job.destination[1]}"
+            )
+            return
+
+    # No matching job found:
+    robot.current_job = None
+    robot.isassigned = True
+    robot.going_home = True
+    print(f"Robot {robot.id} has no more jobs, returning home")
+
         
 
 
@@ -133,24 +158,40 @@ def robot_event(robot: Robot):
     job = robot.current_job
     
     if job is None:
-        # go to starting position
         return 
 
     if job.destination[robot.loaded] > robot.current_pos:
         robot.current_pos += 1
-        print(f"Robot {robot.id}: moves right to position {robot.current_pos}")
+        print(f"Robot {robot.id} moves right to position {robot.current_pos}")
     elif job.destination[robot.loaded] < robot.current_pos:
         robot.current_pos -= 1
-        print(f"Robot {robot.id}: moves left to position {robot.current_pos}")
-    else: # at destination
+        print(f"Robot {robot.id} moves left to position {robot.current_pos}")
+    else:
         if robot.loaded == 0:
             robot.loaded = 1
-            print(f"Robot {robot.id}: picks up product")
+            print(
+                f"Robot {robot.id} picks up product type {job.product_type} "
+                f"from belt position {job.destination[0]}"
+            )
         else:
+            print(
+                f"Robot {robot.id} delivers product type {job.product_type} "
+                f"to pallet position {job.destination[1]}"
+            )
             jobs.remove(job)
             robot.isassigned = False
-            print(f"Robot {robot.id}: delivers product for Order")
 
+
+def go_home(robot: Robot, starting_pos: int):
+    if robot.current_pos < starting_pos:
+        robot.current_pos += 1
+        print(f"Robot {robot.id}: moves right to position {robot.current_pos} (going home)")
+    elif robot.current_pos > starting_pos:
+        robot.current_pos -= 1
+        print(f"Robot {robot.id}: moves left to position {robot.current_pos} (going home)")
+    else:
+        robot.going_home = False
+        print(f"Robot {robot.id}: reached home position {robot.current_pos}")
 
 
 def simulation(starting_pos: List[int] ,jobs: List["Job"]) -> int:
@@ -160,22 +201,28 @@ def simulation(starting_pos: List[int] ,jobs: List["Job"]) -> int:
     
     makespan = 0
 
-    while len(jobs) > 0:
-        print(f"--- Time step {makespan} ---")
+    while len(jobs) > 0 or r0.going_home or r1.going_home:
+        
+
         if r0.isassigned == False:
-            r0.current_job = assign_job(r0.id)
-            r0.loaded = 0
-            r0.isassigned = True
+            assign_job(r0)
 
         if r1.isassigned == False:
-            r1.current_job = assign_job(r1.id)
-            r1.loaded = 0
-            r1.isassigned = True
+            assign_job(r1)
+
+        print(f"--- Time step {makespan} ---")
+
+        if r0.going_home:
+            go_home(r0, starting_pos[0])
+        else:
+            robot_event(r0)
+        
+        if r1.going_home:
+            go_home(r1, starting_pos[1])
+        else:
+            robot_event(r1)
 
         
-        robot_event(r0)
-        robot_event(r1)
-
         # Check for collision
         if r0.current_pos == r1.current_pos:
             print("Collision detected between Robot 0 and Robot 1")
