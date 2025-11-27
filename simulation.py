@@ -24,12 +24,19 @@ class Job:
     order_id : int
     product_in_order : int
 
+@dataclass
+class Robot:
+    id : int
+    current_pos : int
+    loaded : int = 0
+    isassigned : bool = False
+    current_job : Job = None
 
 def parse(filename: str) -> List[Product]:
     """
     Parse the data.txt and return a flat list of Product objects.
     """
-
+    current_pos: List[int]
     products: List[Product] = []
     belts: List[int] = []
     product_id_counter = 1  # global increasing product ID
@@ -39,22 +46,19 @@ def parse(filename: str) -> List[Product]:
         for line in f:
             line = line.strip()
 
-            # ----------------------------------------
-            # Parse belt line: "Belts P1, P2, P3: 2, 5, 9"
-            # ----------------------------------------
+            if line.startswith("Number of locations"):
+                _, value = line.split(":")
+                current_pos = [0, int(value.strip())-1]
+            
             if line.startswith("Belts"):
                 # Split at ":" and take the right side "2, 5, 9"
                 _, values = line.split(":")
                 belts = [int(x.strip()) for x in values.split(",")]
                 continue
 
-            # ----------------------------------------
-            # Parse each order: "Order O1: 1, 1, 3, 3, 2"
-            # ----------------------------------------
             if line.startswith("Order"):
-                order_index += 1  # O1 -> 1, O2 -> 2, ...
+                order_index += 1
 
-                # Extract product type numbers after ':'
                 _, values = line.split(":")
                 product_types = [int(x.strip()) for x in values.split(",")]
 
@@ -72,22 +76,15 @@ def parse(filename: str) -> List[Product]:
                     ))
                     product_id_counter += 1
 
-    return products
+    return products , current_pos
 
 
 
 def schedule_jobs(solution: List[List[int]], products: List["Product"]) -> List[Job]:
     """
-    Create a list of Job objects from a solution vector and a list of products.
-
     solution[0]: list of pallet locations per order (index = order_id - 1)
     solution[1]: list of robot ids per product (index = product_id - 1)
     solution[2]: pickup sequence = list of product_ids in pickup order
-
-    Each Job has:
-      - product_id
-      - robot_id  (from solution[1])
-      - destination = [belt_location, pallet_location]
 
     """
 
@@ -122,14 +119,79 @@ def schedule_jobs(solution: List[List[int]], products: List["Product"]) -> List[
 
     return jobs
 
-    
 
-def simulation():
-    pass
+def assign_job(robot_id: int)-> Job:
+    print(len(jobs))
+    for job in jobs:
+        if job.robot_id == robot_id:
+            return job
+        
+
+
+
+def robot_event(robot: Robot):
+    job = robot.current_job
+    
+    if job is None:
+        # go to starting position
+        return 
+
+    if job.destination[robot.loaded] > robot.current_pos:
+        robot.current_pos += 1
+        print(f"Robot {robot.id}: moves right to position {robot.current_pos}")
+    elif job.destination[robot.loaded] < robot.current_pos:
+        robot.current_pos -= 1
+        print(f"Robot {robot.id}: moves left to position {robot.current_pos}")
+    else: # at destination
+        if robot.loaded == 0:
+            robot.loaded = 1
+            print(f"Robot {robot.id}: picks up product")
+        else:
+            jobs.remove(job)
+            robot.isassigned = False
+            print(f"Robot {robot.id}: delivers product for Order")
+
+
+
+def simulation(starting_pos: List[int] ,jobs: List["Job"]) -> int:
+
+    r0 = Robot(id=0, current_pos=starting_pos[0])
+    r1 = Robot(id=1, current_pos=starting_pos[1])
+    
+    makespan = 0
+
+    while len(jobs) > 0:
+        print(f"--- Time step {makespan} ---")
+        if r0.isassigned == False:
+            r0.current_job = assign_job(r0.id)
+            r0.loaded = 0
+            r0.isassigned = True
+
+        if r1.isassigned == False:
+            r1.current_job = assign_job(r1.id)
+            r1.loaded = 0
+            r1.isassigned = True
+
+        
+        robot_event(r0)
+        robot_event(r1)
+
+        # Check for collision
+        if r0.current_pos == r1.current_pos:
+            print("Collision detected between Robot 0 and Robot 1")
+            #return 
+        
+
+        makespan += 1
+   
+    return makespan
+
 
 if __name__ == "__main__":
-    products = parse("data.txt")
-    
+    products, robot_starting_pos = parse("data.txt")
     jobs = schedule_jobs(S, products)
+
+    makespan = simulation(robot_starting_pos, jobs)
+    
     for job in jobs:
         print(job)
