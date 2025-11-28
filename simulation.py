@@ -26,17 +26,15 @@ class Job:
     product_type : int
     product_in_order : int
     
-
-
 @dataclass
 class Robot:
     id : int
     current_pos : int
     loaded : int = 0
-    isassigned : bool = False
+    priority : bool = True
     current_job : Job = None
     going_home : bool = False
-
+#--------------- Parsing functions ----------------#
 def parse(filename: str) -> List[Product]:
     """
     Parse the data.txt and return a flat list of Product objects.
@@ -56,7 +54,7 @@ def parse(filename: str) -> List[Product]:
                 current_pos = [0, int(value.strip())-1]
             
             if line.startswith("Belts"):
-                # Split at ":" and take the right side "2, 5, 9"
+                
                 _, values = line.split(":")
                 belts = [int(x.strip()) for x in values.split(",")]
                 continue
@@ -83,8 +81,6 @@ def parse(filename: str) -> List[Product]:
                     product_id_counter += 1
 
     return products , current_pos
-
-
 
 def schedule_jobs(solution: List[List[int]], products: List["Product"]) -> List[Job]:
     """
@@ -127,13 +123,13 @@ def schedule_jobs(solution: List[List[int]], products: List["Product"]) -> List[
         
     return jobs
 
-
+#--------------- Simulation functions ----------------#
 def assign_job(robot):
     for job in jobs:
         if job.robot_id == robot.id:
             robot.current_job = job
             robot.loaded = 0
-            robot.isassigned = True
+            #robot.isassigned = True
             robot.going_home = False
 
             print(
@@ -146,13 +142,9 @@ def assign_job(robot):
 
     # No matching job found:
     robot.current_job = None
-    robot.isassigned = True
+    #robot.isassigned = True
     robot.going_home = True
     print(f"Robot {robot.id} has no more jobs, returning home")
-
-        
-
-
 
 def robot_event(robot: Robot):
     job = robot.current_job
@@ -160,7 +152,14 @@ def robot_event(robot: Robot):
     if job is None:
         return 
 
-    if job.destination[robot.loaded] > robot.current_pos:
+    if robot.priority == False:
+        if robot.id == 0:
+            robot.current_pos -= 1
+            print(f"Robot {robot.id} moves left to position {robot.current_pos}")
+        else:
+            robot.current_pos += 1
+            print(f"Robot {robot.id} moves right to position {robot.current_pos}")
+    elif job.destination[robot.loaded] > robot.current_pos:
         robot.current_pos += 1
         print(f"Robot {robot.id} moves right to position {robot.current_pos}")
     elif job.destination[robot.loaded] < robot.current_pos:
@@ -179,8 +178,7 @@ def robot_event(robot: Robot):
                 f"to pallet position {job.destination[1]}"
             )
             jobs.remove(job)
-            robot.isassigned = False
-
+            assign_job(robot)
 
 def go_home(robot: Robot, starting_pos: int):
     if robot.current_pos < starting_pos:
@@ -194,42 +192,49 @@ def go_home(robot: Robot, starting_pos: int):
         print(f"Robot {robot.id}: reached home position {robot.current_pos}")
 
 
-def simulation(starting_pos: List[int] ,jobs: List["Job"]) -> int:
+def check_distance(r0: Robot, r1: Robot, policy) -> int:
+    if policy == "default":
+        return abs(r1.current_pos - r0.current_pos)
+    else: #For now. There shall be other policies later
+        if abs(r1.current_pos - r0.current_pos) == 1:
+            # here will probably be a dicide_priority function
+            r1.priority = False
+        return abs(r1.current_pos - r0.current_pos)
+
+#TODO: Modify penalty evaluation function
+def evaluate_penalty() -> int:
+    return 9999
+
+def simulation(starting_pos: List[int] ,jobs: List["Job"], policy = "default") -> int:
 
     r0 = Robot(id=0, current_pos=starting_pos[0])
     r1 = Robot(id=1, current_pos=starting_pos[1])
     
     makespan = 0
-
+    print(f"--- Time step {makespan} ---")
+    print(f"Robots are at starting positions: {r0.current_pos}, {r1.current_pos}")
+    assign_job(r0)
+    assign_job(r1)
     while len(jobs) > 0 or r0.going_home or r1.going_home:
         
-
-        if r0.isassigned == False:
-            assign_job(r0)
-
-        if r1.isassigned == False:
-            assign_job(r1)
-
+        makespan += 1
         print(f"--- Time step {makespan} ---")
 
+        if check_distance(r0, r1, policy) == 0:
+            return evaluate_penalty()
         if r0.going_home:
             go_home(r0, starting_pos[0])
         else:
             robot_event(r0)
         
+        if check_distance(r0, r1, policy) == 0:
+            return evaluate_penalty()
         if r1.going_home:
             go_home(r1, starting_pos[1])
         else:
             robot_event(r1)
 
         
-        # Check for collision
-        if r0.current_pos == r1.current_pos:
-            print("Collision detected between Robot 0 and Robot 1")
-            #return 
-        
-
-        makespan += 1
    
     return makespan
 
@@ -238,7 +243,8 @@ if __name__ == "__main__":
     products, robot_starting_pos = parse("data.txt")
     jobs = schedule_jobs(S, products)
 
-    makespan = simulation(robot_starting_pos, jobs)
+    fitness = simulation(robot_starting_pos, jobs)
     
+    print(f"Simulation completed in {fitness} time steps.")
     for job in jobs:
         print(job)
