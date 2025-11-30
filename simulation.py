@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List
 
+# Example solution S works as an initial solution
 S = [
     [4, 2, 8],                             # Pallet location 
     [0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0],   # Field 2
@@ -34,8 +35,8 @@ class Robot:
     priority : bool = True
     current_job : Job = None
     going_home : bool = False
-#--------------- Parsing functions ----------------#
-def parse(filename: str) -> List[Product]:
+#--------------- Parsing function ----------------#
+def load_environment(filename: str) -> List[Product]:
     """
     Parse the data.txt and return a flat list of Product objects.
     """
@@ -82,6 +83,8 @@ def parse(filename: str) -> List[Product]:
 
     return products , current_pos
 
+#--------------- Simulation functions ----------------#
+
 def schedule_jobs(solution: List[List[int]], products: List["Product"]) -> List[Job]:
     """
     solution[0]: list of pallet locations per order (index = order_id - 1)
@@ -123,7 +126,7 @@ def schedule_jobs(solution: List[List[int]], products: List["Product"]) -> List[
         
     return jobs
 
-#--------------- Simulation functions ----------------#
+
 def assign_job(robot):
     for job in jobs:
         if job.robot_id == robot.id:
@@ -201,18 +204,41 @@ def check_distance(r0: Robot, r1: Robot, policy) -> int:
             r1.priority = False
         return abs(r1.current_pos - r0.current_pos)
 
-#TODO: Modify penalty evaluation function
-def evaluate_penalty() -> int:
-    return 9999
+def evaluate_penalty(total_jobs: int, finished_jobs: int, total_tu: int, L: int) -> int:
+    """
+    Calculate penalty for collision scenarios.
+    
+    F(S) = big_penalty + penalty_per_job*(|O|-finished_jobs) + penalty_per_tu*total_tu
+    
+    Args:
+        total_jobs: Total number of jobs |O|
+        finished_jobs: Number of completed jobs
+        total_tu: Total time units elapsed until collision
+        L: Number of locations (for calculating big_penalty)
+    
+    Returns:
+        Penalty value
+    """
+    big_penalty = L * total_jobs
+    penalty_per_job = 10
+    penalty_per_tu = 1
+    
+    unfinished_jobs = total_jobs - finished_jobs
+    
+    penalty = big_penalty + (penalty_per_job * unfinished_jobs) + (penalty_per_tu * total_tu)
+    
+    return penalty
 
 def simulation(starting_pos: List[int] ,jobs: List["Job"], policy = "default") -> int:
 
     r0 = Robot(id=0, current_pos=starting_pos[0])
     r1 = Robot(id=1, current_pos=starting_pos[1])
     
+    total_jobs = len(jobs)
+    L = starting_pos[1] - 1  # Number of locations
     makespan = 0
     print(f"--- Time step {makespan} ---")
-    print(f"Robots are at starting positions: {r0.current_pos}, {r1.current_pos}")
+    print(f"Robots are at starting positions: {starting_pos[0]}, {starting_pos[1]}")
     assign_job(r0)
     assign_job(r1)
     while len(jobs) > 0 or r0.going_home or r1.going_home:
@@ -221,30 +247,28 @@ def simulation(starting_pos: List[int] ,jobs: List["Job"], policy = "default") -
         print(f"--- Time step {makespan} ---")
 
         if check_distance(r0, r1, policy) == 0:
-            return evaluate_penalty()
+            finished_jobs = total_jobs - len(jobs)
+            return evaluate_penalty(total_jobs, finished_jobs, makespan, L)
         if r0.going_home:
             go_home(r0, starting_pos[0])
         else:
             robot_event(r0)
         
         if check_distance(r0, r1, policy) == 0:
-            return evaluate_penalty()
+            finished_jobs = total_jobs - len(jobs)
+            return evaluate_penalty(total_jobs, finished_jobs, makespan,L)
         if r1.going_home:
             go_home(r1, starting_pos[1])
         else:
             robot_event(r1)
 
-        
-   
     return makespan
 
 
 if __name__ == "__main__":
-    products, robot_starting_pos = parse("data.txt")
+    products, robot_starting_pos = load_environment("data.txt")
     jobs = schedule_jobs(S, products)
 
     fitness = simulation(robot_starting_pos, jobs)
     
-    print(f"Simulation completed in {fitness} time steps.")
-    for job in jobs:
-        print(job)
+    print(f"Simulation completed the fitness score is: {fitness}")
