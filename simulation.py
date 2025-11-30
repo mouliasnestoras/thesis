@@ -124,127 +124,125 @@ def schedule_jobs(solution: List[List[int]], products: List["Product"]) -> List[
     return jobs
 
 #--------------- Simulation functions ----------------#
-def assign_job(robot):
-    for job in jobs:
-        if job.robot_id == robot.id:
-            robot.current_job = job
-            robot.loaded = 0
-            #robot.isassigned = True
-            robot.going_home = False
+class simulator:
+    def __init__(self, policy: str = "default"):
+        self.policy = policy
+        self.jobs: List[Job] = []
 
-            print(
-                f"Robot {robot.id} assigned job to "
-                f"pickup product #{job.product_in_order} of order {job.order_id} "
-                f"(type {job.product_type}) from belt {job.destination[0]} "
-                f"and deliver to pallet {job.destination[1]}"
-            )
+    def assign_job(self, robot: Robot):
+        for job in self.jobs:
+            if job.robot_id == robot.id:
+                robot.current_job = job
+                robot.loaded = 0
+                robot.going_home = False
+
+                print(
+                    f"Robot {robot.id} assigned job to "
+                    f"pickup product #{job.product_in_order} of order {job.order_id} "
+                    f"(type {job.product_type}) from belt {job.destination[0]} "
+                    f"and deliver to pallet {job.destination[1]}"
+                )
+                return
+
+        robot.current_job = None
+        robot.going_home = True
+        print(f"Robot {robot.id} has no more jobs, returning home")
+
+    def robot_event(self, robot: Robot):
+        job = robot.current_job
+
+        if job is None:
             return
 
-    # No matching job found:
-    robot.current_job = None
-    #robot.isassigned = True
-    robot.going_home = True
-    print(f"Robot {robot.id} has no more jobs, returning home")
-
-def robot_event(robot: Robot):
-    job = robot.current_job
-    
-    if job is None:
-        return 
-
-    if robot.priority == False:
-        if robot.id == 0:
+        if robot.priority is False:
+            if robot.id == 0:
+                robot.current_pos -= 1
+                print(f"Robot {robot.id} moves left to position {robot.current_pos}")
+            else:
+                robot.current_pos += 1
+                print(f"Robot {robot.id} moves right to position {robot.current_pos}")
+        elif job.destination[robot.loaded] > robot.current_pos:
+            robot.current_pos += 1
+            print(f"Robot {robot.id} moves right to position {robot.current_pos}")
+        elif job.destination[robot.loaded] < robot.current_pos:
             robot.current_pos -= 1
             print(f"Robot {robot.id} moves left to position {robot.current_pos}")
         else:
+            if robot.loaded == 0:
+                robot.loaded = 1
+                print(
+                    f"Robot {robot.id} picks up product type {job.product_type} "
+                    f"from belt position {job.destination[0]}"
+                )
+            else:
+                print(
+                    f"Robot {robot.id} delivers product type {job.product_type} "
+                    f"to pallet position {job.destination[1]}"
+                )
+                self.jobs.remove(job)
+                self.assign_job(robot)
+
+    def go_home(self, robot: Robot, starting_pos: int):
+        if robot.current_pos < starting_pos:
             robot.current_pos += 1
-            print(f"Robot {robot.id} moves right to position {robot.current_pos}")
-    elif job.destination[robot.loaded] > robot.current_pos:
-        robot.current_pos += 1
-        print(f"Robot {robot.id} moves right to position {robot.current_pos}")
-    elif job.destination[robot.loaded] < robot.current_pos:
-        robot.current_pos -= 1
-        print(f"Robot {robot.id} moves left to position {robot.current_pos}")
-    else:
-        if robot.loaded == 0:
-            robot.loaded = 1
-            print(
-                f"Robot {robot.id} picks up product type {job.product_type} "
-                f"from belt position {job.destination[0]}"
-            )
+            print(f"Robot {robot.id}: moves right to position {robot.current_pos} (going home)")
+        elif robot.current_pos > starting_pos:
+            robot.current_pos -= 1
+            print(f"Robot {robot.id}: moves left to position {robot.current_pos} (going home)")
         else:
-            print(
-                f"Robot {robot.id} delivers product type {job.product_type} "
-                f"to pallet position {job.destination[1]}"
-            )
-            jobs.remove(job)
-            assign_job(robot)
+            robot.going_home = False
+            print(f"Robot {robot.id}: reached home position {robot.current_pos}")
 
-def go_home(robot: Robot, starting_pos: int):
-    if robot.current_pos < starting_pos:
-        robot.current_pos += 1
-        print(f"Robot {robot.id}: moves right to position {robot.current_pos} (going home)")
-    elif robot.current_pos > starting_pos:
-        robot.current_pos -= 1
-        print(f"Robot {robot.id}: moves left to position {robot.current_pos} (going home)")
-    else:
-        robot.going_home = False
-        print(f"Robot {robot.id}: reached home position {robot.current_pos}")
+    def check_distance(self, r0: Robot, r1: Robot) -> int:
+        if self.policy == "default":
+            return abs(r1.current_pos - r0.current_pos)
 
-
-def check_distance(r0: Robot, r1: Robot, policy) -> int:
-    if policy == "default":
-        return abs(r1.current_pos - r0.current_pos)
-    else: #For now. There shall be other policies later
         if abs(r1.current_pos - r0.current_pos) == 1:
-            # here will probably be a dicide_priority function
             r1.priority = False
         return abs(r1.current_pos - r0.current_pos)
 
-#TODO: Modify penalty evaluation function
-def evaluate_penalty() -> int:
-    return 9999
+    def evaluate_penalty(self) -> int:
+        return 9999
 
-def simulation(starting_pos: List[int] ,jobs: List["Job"], policy = "default") -> int:
+    def simulation(self, starting_pos: List[int], jobs: List["Job"]) -> int:
+        self.jobs = jobs
 
-    r0 = Robot(id=0, current_pos=starting_pos[0])
-    r1 = Robot(id=1, current_pos=starting_pos[1])
-    
-    makespan = 0
-    print(f"--- Time step {makespan} ---")
-    print(f"Robots are at starting positions: {r0.current_pos}, {r1.current_pos}")
-    assign_job(r0)
-    assign_job(r1)
-    while len(jobs) > 0 or r0.going_home or r1.going_home:
-        
-        makespan += 1
+        r0 = Robot(id=0, current_pos=starting_pos[0])
+        r1 = Robot(id=1, current_pos=starting_pos[1])
+
+        makespan = 0
         print(f"--- Time step {makespan} ---")
+        print(f"Robots are at starting positions: {r0.current_pos}, {r1.current_pos}")
+        self.assign_job(r0)
+        self.assign_job(r1)
+        while len(self.jobs) > 0 or r0.going_home or r1.going_home:
+            makespan += 1
+            print(f"--- Time step {makespan} ---")
 
-        if check_distance(r0, r1, policy) == 0:
-            return evaluate_penalty()
-        if r0.going_home:
-            go_home(r0, starting_pos[0])
-        else:
-            robot_event(r0)
-        
-        if check_distance(r0, r1, policy) == 0:
-            return evaluate_penalty()
-        if r1.going_home:
-            go_home(r1, starting_pos[1])
-        else:
-            robot_event(r1)
+            if self.check_distance(r0, r1) == 0:
+                return self.evaluate_penalty()
+            if r0.going_home:
+                self.go_home(r0, starting_pos[0])
+            else:
+                self.robot_event(r0)
 
-        
-   
-    return makespan
+            if self.check_distance(r0, r1) == 0:
+                return self.evaluate_penalty()
+            if r1.going_home:
+                self.go_home(r1, starting_pos[1])
+            else:
+                self.robot_event(r1)
+
+        return makespan
 
 
 if __name__ == "__main__":
     products, robot_starting_pos = parse("data.txt")
     jobs = schedule_jobs(S, products)
 
-    fitness = simulation(robot_starting_pos, jobs)
-    
+    sim = simulator()
+    fitness = sim.simulation(robot_starting_pos, jobs)
+
     print(f"Simulation completed in {fitness} time steps.")
     for job in jobs:
         print(job)
