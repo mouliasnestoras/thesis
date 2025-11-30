@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 S = [
     [4, 2, 8],                             # Pallet location 
@@ -32,7 +32,7 @@ class Robot:
     current_pos : int
     loaded : int = 0
     priority : bool = True
-    current_job : Job = None
+    current_job : Optional[Job] = None
     going_home : bool = False
 #--------------- Parsing functions ----------------#
 def parse(filename: str) -> List[Product]:
@@ -194,12 +194,17 @@ class simulator:
             print(f"Robot {robot.id}: reached home position {robot.current_pos}")
 
     def check_distance(self, r0: Robot, r1: Robot) -> int:
-        if self.policy == "default":
-            return abs(r1.current_pos - r0.current_pos)
+        distance = abs(r1.current_pos - r0.current_pos)
 
-        if abs(r1.current_pos - r0.current_pos) == 1:
+        if self.policy == "default":
+            return distance
+
+        if distance == 1:
             r1.priority = False
-        return abs(r1.current_pos - r0.current_pos)
+        else:
+            r1.priority = True
+
+        return distance
 
     def evaluate_penalty(self) -> int:
         return 9999
