@@ -202,8 +202,7 @@ class Simulator:
             r1.priority = False
         return abs(r1.current_pos - r0.current_pos)
 
-    @staticmethod
-    def evaluate_penalty(total_jobs: int, finished_jobs: int, total_tu: int, L: int) -> int:
+    def evaluate_penalty(self, total_jobs: int, finished_jobs: int, total_tu: int, L: int) -> int:
         big_penalty = L * total_jobs
         penalty_per_job = 10
         penalty_per_tu = 1
