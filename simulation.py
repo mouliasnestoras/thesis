@@ -253,9 +253,7 @@ if __name__ == "__main__":
     products, robot_starting_pos = parse("data.txt")
 
     sim = Simulator(solution=S)
-    jobs = sim.schedule_jobs(products)
+    sim.schedule_jobs(products)
     fitness = sim.simulation(robot_starting_pos)
 
     print(f"Simulation completed in {fitness} time steps.")
-    for job in jobs:
-        print(job)
