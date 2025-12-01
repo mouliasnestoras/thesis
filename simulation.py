@@ -89,21 +89,21 @@ def parse(filename: str) -> List[Product]:
 
 
 class Simulator:
-    def __init__(self, policy: str = "default"):
+    def __init__(self, solution: List[List[int]], policy: str = "default"):
         self.policy = policy
+        self.solution = solution
         self.jobs: List[Job] = []
 
-    @staticmethod
-    def schedule_jobs(solution: List[List[int]], products: List["Product"]) -> List[Job]:
+    def schedule_jobs(self, products: List["Product"]) -> List[Job]:
         """
         solution[0]: list of pallet locations per order (index = order_id - 1)
         solution[1]: list of robot ids per product (index = product_id - 1)
         solution[2]: pickup sequence = list of product_ids in pickup order
         """
 
-        pallet_locations = solution[0]
-        robot_ids = solution[1]
-        pickup_sequence = solution[2]
+        pallet_locations = self.solution[0]
+        robot_ids = self.solution[1]
+        pickup_sequence = self.solution[2]
 
         jobs: List[Job] = []
 
@@ -251,9 +251,9 @@ class Simulator:
 
 if __name__ == "__main__":
     products, robot_starting_pos = parse("data.txt")
-    jobs = Simulator.schedule_jobs(S, products)
 
-    sim = Simulator()
+    sim = Simulator(solution=S)
+    jobs = sim.schedule_jobs(products)
     fitness = sim.simulation(robot_starting_pos, jobs)
 
     print(f"Simulation completed in {fitness} time steps.")
