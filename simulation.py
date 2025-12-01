@@ -9,31 +9,35 @@ S = [
 
 @dataclass(frozen=True)
 class Product:
-    product_id : int
-    order_id   : int
-    belt_location : int
+    product_id: int
+    order_id: int
+    belt_location: int
     # additional attributes for print messages
-    product_in_order : int
-    product_type : int
+    product_in_order: int
+    product_type: int
+
 
 @dataclass
 class Job:
-    job_id  : int
-    robot_id    : int
-    destination : List[int]
+    job_id: int
+    robot_id: int
+    destination: List[int]
     # additional attributes for print messages
-    order_id : int
-    product_type : int
-    product_in_order : int
-    
+    order_id: int
+    product_type: int
+    product_in_order: int
+
+
 @dataclass
 class Robot:
-    id : int
-    current_pos : int
-    loaded : int = 0
-    priority : bool = True
-    current_job : Optional[Job] = None
-    going_home : bool = False
+    id: int
+    current_pos: int
+    loaded: int = 0
+    priority: bool = True
+    current_job: Optional[Job] = None
+    going_home: bool = False
+
+
 #--------------- Parsing functions ----------------#
 def parse(filename: str) -> List[Product]:
     """
@@ -43,7 +47,7 @@ def parse(filename: str) -> List[Product]:
     products: List[Product] = []
     belts: List[int] = []
     product_id_counter = 1  # global increasing product ID
-    order_index = 0         # O1=1, O2=2,...
+    order_index = 0  # O1=1, O2=2,...
 
     with open(filename, "r") as f:
         for line in f:
@@ -51,10 +55,9 @@ def parse(filename: str) -> List[Product]:
 
             if line.startswith("Number of locations"):
                 _, value = line.split(":")
-                current_pos = [0, int(value.strip())-1]
-            
+                current_pos = [0, int(value.strip()) - 1]
+
             if line.startswith("Belts"):
-                
                 _, values = line.split(":")
                 belts = [int(x.strip()) for x in values.split(",")]
                 continue
@@ -71,63 +74,60 @@ def parse(filename: str) -> List[Product]:
                     product_index += 1
 
                     belt_location = belts[pt - 1]  # type→belt index
-                    products.append(Product(
-                        product_id=product_id_counter,
-                        order_id=order_index,
-                        belt_location=belt_location,
-                        product_in_order=product_index,
-                        product_type=pt
-                    ))
+                    products.append(
+                        Product(
+                            product_id=product_id_counter,
+                            order_id=order_index,
+                            belt_location=belt_location,
+                            product_in_order=product_index,
+                            product_type=pt,
+                        )
+                    )
                     product_id_counter += 1
 
-    return products , current_pos
+    return products, current_pos
 
-def schedule_jobs(solution: List[List[int]], products: List["Product"]) -> List[Job]:
-    """
-    solution[0]: list of pallet locations per order (index = order_id - 1)
-    solution[1]: list of robot ids per product (index = product_id - 1)
-    solution[2]: pickup sequence = list of product_ids in pickup order
 
-    """
-
-    pallet_locations = solution[0]
-    robot_ids = solution[1]
-    pickup_sequence = solution[2]
-
-    jobs: List[Job] = []
-
-    for job in pickup_sequence:
-        product = products[job-1]
-
-        job_id = product.product_id
-
-        # robot id is indexed by (product_id - 1)
-        robot_id = robot_ids[job-1]
-
-        # destination[0] = belt location (from Product)
-        belt_location = product.belt_location
-
-        # destination[1] = pallet location (from solution[0])
-        pallet_location = pallet_locations[product.order_id - 1]
-
-        job = Job(
-            job_id= job_id,
-            robot_id=robot_id,
-            destination=[belt_location, pallet_location],
-            order_id=product.order_id,
-            product_in_order=product.product_in_order,
-            product_type=product.product_type
-        )
-        jobs.append(job)
-
-        
-    return jobs
-
-#--------------- Simulation functions ----------------#
-class simulator:
+class Simulator:
     def __init__(self, policy: str = "default"):
         self.policy = policy
         self.jobs: List[Job] = []
+
+    @staticmethod
+    def schedule_jobs(solution: List[List[int]], products: List["Product"]) -> List[Job]:
+        """
+        solution[0]: list of pallet locations per order (index = order_id - 1)
+        solution[1]: list of robot ids per product (index = product_id - 1)
+        solution[2]: pickup sequence = list of product_ids in pickup order
+        """
+
+        pallet_locations = solution[0]
+        robot_ids = solution[1]
+        pickup_sequence = solution[2]
+
+        jobs: List[Job] = []
+
+        for job in pickup_sequence:
+            product = products[job - 1]
+
+            job_id = product.product_id
+
+            robot_id = robot_ids[job - 1]
+
+            belt_location = product.belt_location
+            pallet_location = pallet_locations[product.order_id - 1]
+
+            job = Job(
+                job_id=job_id,
+                robot_id=robot_id,
+                destination=[belt_location, pallet_location],
+                order_id=product.order_id,
+                product_in_order=product.product_in_order,
+                product_type=product.product_type,
+            )
+            jobs.append(job)
+
+        return jobs
 
     def assign_job(self, robot: Robot):
         for job in self.jobs:
@@ -194,20 +194,23 @@ class simulator:
             print(f"Robot {robot.id}: reached home position {robot.current_pos}")
 
     def check_distance(self, r0: Robot, r1: Robot) -> int:
-        distance = abs(r1.current_pos - r0.current_pos)
-
         if self.policy == "default":
-            return distance
-
-        if distance == 1:
+            return abs(r1.current_pos - r0.current_pos)
+        if abs(r1.current_pos - r0.current_pos) == 1:
             r1.priority = False
-        else:
-            r1.priority = True
+        return abs(r1.current_pos - r0.current_pos)
 
-        return distance
+    @staticmethod
+    def evaluate_penalty(total_jobs: int, finished_jobs: int, total_tu: int, L: int) -> int:
+        big_penalty = L * total_jobs
+        penalty_per_job = 10
+        penalty_per_tu = 1
 
-    def evaluate_penalty(self) -> int:
-        return 9999
+        unfinished_jobs = total_jobs - finished_jobs
+
+        penalty = big_penalty + (penalty_per_job * unfinished_jobs) + (penalty_per_tu * total_tu)
+
+        return penalty
 
     def simulation(self, starting_pos: List[int], jobs: List["Job"]) -> int:
         self.jobs = jobs
@@ -215,24 +218,29 @@ class simulator:
         r0 = Robot(id=0, current_pos=starting_pos[0])
         r1 = Robot(id=1, current_pos=starting_pos[1])
 
+        total_jobs = len(self.jobs)
+        L = starting_pos[1] - 1  # Number of locations
         makespan = 0
         print(f"--- Time step {makespan} ---")
-        print(f"Robots are at starting positions: {r0.current_pos}, {r1.current_pos}")
+        print(f"Robots are at starting positions: {starting_pos[0]}, {starting_pos[1]}")
         self.assign_job(r0)
         self.assign_job(r1)
         while len(self.jobs) > 0 or r0.going_home or r1.going_home:
+
             makespan += 1
             print(f"--- Time step {makespan} ---")
 
             if self.check_distance(r0, r1) == 0:
-                return self.evaluate_penalty()
+                finished_jobs = total_jobs - len(self.jobs)
+                return self.evaluate_penalty(total_jobs, finished_jobs, makespan, L)
             if r0.going_home:
                 self.go_home(r0, starting_pos[0])
             else:
                 self.robot_event(r0)
 
             if self.check_distance(r0, r1) == 0:
-                return self.evaluate_penalty()
+                finished_jobs = total_jobs - len(self.jobs)
+                return self.evaluate_penalty(total_jobs, finished_jobs, makespan, L)
             if r1.going_home:
                 self.go_home(r1, starting_pos[1])
             else:
@@ -243,9 +251,9 @@ class simulator:
 
 if __name__ == "__main__":
     products, robot_starting_pos = parse("data.txt")
-    jobs = schedule_jobs(S, products)
+    jobs = Simulator.schedule_jobs(S, products)
 
-    sim = simulator()
+    sim = Simulator()
     fitness = sim.simulation(robot_starting_pos, jobs)
 
     print(f"Simulation completed in {fitness} time steps.")
