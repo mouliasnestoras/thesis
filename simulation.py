@@ -127,6 +127,8 @@ class Simulator:
             )
             jobs.append(job)
 
+        self.jobs = jobs
+
         return jobs
 
     def assign_job(self, robot: Robot):
@@ -212,9 +214,7 @@ class Simulator:
 
         return penalty
 
-    def simulation(self, starting_pos: List[int], jobs: List["Job"]) -> int:
-        self.jobs = jobs
-
+    def simulation(self, starting_pos: List[int]) -> int:
         r0 = Robot(id=0, current_pos=starting_pos[0])
         r1 = Robot(id=1, current_pos=starting_pos[1])
 
@@ -254,7 +254,7 @@ if __name__ == "__main__":
 
     sim = Simulator(solution=S)
     jobs = sim.schedule_jobs(products)
-    fitness = sim.simulation(robot_starting_pos, jobs)
+    fitness = sim.simulation(robot_starting_pos)
 
     print(f"Simulation completed in {fitness} time steps.")
     for job in jobs:
