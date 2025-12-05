@@ -95,3 +95,26 @@ def iter_problems(path: str) -> Generator[Tuple[List[Product], List[int]], None,
                 if products or starting_positions:
                     yield products, starting_positions
                 break
+
+
+def _demo_main():
+    """Pseudo main showing how to consume problems one by one.
+
+    This demonstrates how to iterate over multiple problem definitions in
+    ``data.txt`` (or any file with the same format), schedule the jobs using
+    a provided solution vector, and run the simulation. Replace the example
+    solution ``S`` with your algorithm's output when integrating.
+    """
+
+    from simulation import S, Simulator
+
+    for idx, (products, starting_positions) in enumerate(iter_problems("data.txt"), start=1):
+        print(f"=== Problem {idx} ===")
+        sim = Simulator(solution=S)
+        sim.schedule_jobs(products)
+        fitness = sim.simulation(starting_positions)
+        print(f"Problem {idx} completed with fitness {fitness}\n")
+
+
+if __name__ == "__main__":
+    _demo_main()
