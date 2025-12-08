@@ -185,7 +185,9 @@ class Simulator:
                 self.jobs.remove(job)
                 self.assign_job(robot)
 
-    def go_home(self, robot: Robot, starting_pos: int):
+    def go_home(self, robot: Robot):
+        starting_pos = self.starting_pos[robot.id]
+
         if robot.current_pos < starting_pos:
             robot.current_pos += 1
             print(f"Robot {robot.id}: moves right to position {robot.current_pos} (going home)")
@@ -236,7 +238,7 @@ class Simulator:
                 finished_jobs = total_jobs - len(self.jobs)
                 return self.evaluate_penalty(total_jobs, finished_jobs, makespan, L)
             if r0.going_home:
-                self.go_home(r0, self.starting_pos[0])
+                self.go_home(r0)
             else:
                 self.robot_event(r0)
 
@@ -244,7 +246,7 @@ class Simulator:
                 finished_jobs = total_jobs - len(self.jobs)
                 return self.evaluate_penalty(total_jobs, finished_jobs, makespan, L)
             if r1.going_home:
-                self.go_home(r1, self.starting_pos[1])
+                self.go_home(r1)
             else:
                 self.robot_event(r1)
 
