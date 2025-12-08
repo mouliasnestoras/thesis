@@ -205,20 +205,7 @@ def check_distance(r0: Robot, r1: Robot, policy) -> int:
         return abs(r1.current_pos - r0.current_pos)
 
 def evaluate_penalty(total_jobs: int, finished_jobs: int, total_tu: int, L: int) -> int:
-    """
-    Calculate penalty for collision scenarios.
     
-    F(S) = big_penalty + penalty_per_job*(|O|-finished_jobs) + penalty_per_tu*total_tu
-    
-    Args:
-        total_jobs: Total number of jobs |O|
-        finished_jobs: Number of completed jobs
-        total_tu: Total time units elapsed until collision
-        L: Number of locations (for calculating big_penalty)
-    
-    Returns:
-        Penalty value
-    """
     big_penalty = L * total_jobs
     penalty_per_job = 10
     penalty_per_tu = 1
