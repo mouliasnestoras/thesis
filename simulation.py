@@ -89,9 +89,10 @@ def parse(filename: str) -> List[Product]:
 
 
 class Simulator:
-    def __init__(self, solution: List[List[int]], policy: str = "default"):
+    def __init__(self, solution: List[List[int]], starting_pos: List[int], policy: str = "default"):
         self.policy = policy
         self.solution = solution
+        self.starting_pos = starting_pos
         self.jobs: List[Job] = []
 
     def schedule_jobs(self, products: List["Product"]) -> List[Job]:
@@ -213,15 +214,17 @@ class Simulator:
 
         return penalty
 
-    def simulation(self, starting_pos: List[int]) -> int:
-        r0 = Robot(id=0, current_pos=starting_pos[0])
-        r1 = Robot(id=1, current_pos=starting_pos[1])
+    def simulation(self) -> int:
+        r0 = Robot(id=0, current_pos=self.starting_pos[0])
+        r1 = Robot(id=1, current_pos=self.starting_pos[1])
 
         total_jobs = len(self.jobs)
-        L = starting_pos[1] - 1  # Number of locations
+        L = self.starting_pos[1] - 1  # Number of locations
         makespan = 0
         print(f"--- Time step {makespan} ---")
-        print(f"Robots are at starting positions: {starting_pos[0]}, {starting_pos[1]}")
+        print(
+            f"Robots are at starting positions: {self.starting_pos[0]}, {self.starting_pos[1]}"
+        )
         self.assign_job(r0)
         self.assign_job(r1)
         while len(self.jobs) > 0 or r0.going_home or r1.going_home:
@@ -233,7 +236,7 @@ class Simulator:
                 finished_jobs = total_jobs - len(self.jobs)
                 return self.evaluate_penalty(total_jobs, finished_jobs, makespan, L)
             if r0.going_home:
-                self.go_home(r0, starting_pos[0])
+                self.go_home(r0, self.starting_pos[0])
             else:
                 self.robot_event(r0)
 
@@ -241,7 +244,7 @@ class Simulator:
                 finished_jobs = total_jobs - len(self.jobs)
                 return self.evaluate_penalty(total_jobs, finished_jobs, makespan, L)
             if r1.going_home:
-                self.go_home(r1, starting_pos[1])
+                self.go_home(r1, self.starting_pos[1])
             else:
                 self.robot_event(r1)
 
@@ -251,8 +254,8 @@ class Simulator:
 if __name__ == "__main__":
     products, robot_starting_pos = parse("data.txt")
 
-    sim = Simulator(solution=S)
+    sim = Simulator(solution=S, starting_pos=robot_starting_pos)
     sim.schedule_jobs(products)
-    fitness = sim.simulation(robot_starting_pos)
+    fitness = sim.simulation()
 
     print(f"Simulation completed in {fitness} time steps.")

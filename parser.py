@@ -110,9 +110,9 @@ def _demo_main():
 
     for idx, (products, starting_positions) in enumerate(iter_problems("data.txt"), start=1):
         print(f"=== Problem {idx} ===")
-        sim = Simulator(solution=S)
+        sim = Simulator(solution=S, starting_pos=starting_positions)
         sim.schedule_jobs(products)
-        fitness = sim.simulation(starting_positions)
+        fitness = sim.simulation()
         print(f"Problem {idx} completed with fitness {fitness}\n")
 
 
