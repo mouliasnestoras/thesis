@@ -144,14 +144,14 @@ def clear_all(directory: str = "instances") -> None:
 # ------------------ Example: generate a suite ------------------ #
 
 def main():
-    rng = random.Random()  # seed for reproducibility
+    rng = random.Random()  
 
     # Output folder (will be created if it does not exist)
     output_dir = "instances"
     os.makedirs(output_dir, exist_ok=True)
 
 
-    # Decide instances 
+    # Choose instance parameters 
     inst_params = InstanceParams(
         num_locations_param=NormalIntParam(mean=10, std=2, min_val=10, max_val=20),
         num_belts_param=NormalIntParam(mean=3, std=0.5, min_val=1, max_val=6),

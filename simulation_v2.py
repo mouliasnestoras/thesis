@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import List, Optional
-
+import time
 S = [
     [4, 2, 8],                             # pallet locations 
     [0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0],   # index = product_id - 1, value = robot_id
@@ -86,15 +86,22 @@ def load_environment(filename: str) -> List[Product]:
                     product_id_counter += 1
 
     return products, current_pos
-#--------------- Simulation classes and functions ----------------#
+
+# when verbose is False, we don't want to print anything, so we can replace print with a no-op function
+def noop(*args, **kwargs):
+    pass
+
+#--------------- Simulation class ----------------#
 
 
 class Simulator:
-    def __init__(self, solution: List[List[int]], starting_pos: List[int], policy: str = "default"):
+    def __init__(self, solution: List[List[int]], starting_pos: List[int], policy: str = "default", verbose=False):
         self.policy = policy
         self.solution = solution
         self.starting_pos = starting_pos
         self.jobs: List[Job] = []
+
+        self.log = print if verbose else noop
 
     def schedule_jobs(self, products: List["Product"]) -> List[Job]:
         """
@@ -140,7 +147,7 @@ class Simulator:
                 robot.loaded = 0
                 robot.going_home = False
 
-                print(
+                self.log(
                     f"Robot {robot.id} assigned job to "
                     f"pickup product #{job.product_in_order} of order {job.order_id} "
                     f"(type {job.product_type}) from belt {job.destination[0]} "
@@ -150,7 +157,7 @@ class Simulator:
 
         robot.current_job = None
         robot.going_home = True
-        print(f"Robot {robot.id} has no more jobs, returning home")
+        self.log(f"Robot {robot.id} has no more jobs, returning home")
 
     def robot_event(self, robot: Robot):
         job = robot.current_job
@@ -161,22 +168,22 @@ class Simulator:
         if robot.priority is False:
             if robot.current_pos != self.starting_pos[robot.id]:
                 robot.current_pos +=1 if robot.id == 1 else -1
-                print(f"Robot {robot.id} moves {'right' if robot.id ==1 else 'left'} to position {robot.current_pos} (yielding priority)")
+                self.log(f"Robot {robot.id} moves {'right' if robot.id ==1 else 'left'} to position {robot.current_pos} (yielding priority)")
         elif job.destination[robot.loaded] > robot.current_pos:
             robot.current_pos += 1
-            print(f"Robot {robot.id} moves right to position {robot.current_pos}")
+            self.log(f"Robot {robot.id} moves right to position {robot.current_pos}")
         elif job.destination[robot.loaded] < robot.current_pos:
             robot.current_pos -= 1
-            print(f"Robot {robot.id} moves left to position {robot.current_pos}")
+            self.log(f"Robot {robot.id} moves left to position {robot.current_pos}")
         else:
             if robot.loaded == 0:
                 robot.loaded = 1
-                print(
+                self.log(
                     f"Robot {robot.id} picks up product type {job.product_type} "
                     f"from belt position {job.destination[0]}"
                 )
             else:
-                print(
+                self.log(
                     f"Robot {robot.id} delivers product type {job.product_type} "
                     f"to pallet position {job.destination[1]}"
                 )
@@ -188,18 +195,18 @@ class Simulator:
 
         if robot.current_pos < starting_pos:
             robot.current_pos += 1
-            print(f"Robot {robot.id}: moves right to position {robot.current_pos} (going home)")
+            self.log(f"Robot {robot.id}: moves right to position {robot.current_pos} (going home)")
         elif robot.current_pos > starting_pos:
             robot.current_pos -= 1
-            print(f"Robot {robot.id}: moves left to position {robot.current_pos} (going home)")
+            self.log(f"Robot {robot.id}: moves left to position {robot.current_pos} (going home)")
         else:
             robot.going_home = False
-            print(f"Robot {robot.id}: reached home position {robot.current_pos}")
+            self.log(f"Robot {robot.id}: reached home position {robot.current_pos}")
 
     def check_distance(self, r0: Robot, r1: Robot) -> int:
         if self.policy == "default":
             return abs(r1.current_pos - r0.current_pos)
-        if abs(r1.current_pos - r0.current_pos) == 1:
+        elif abs(r1.current_pos - r0.current_pos) == 1:
             r1.priority = False
         return abs(r1.current_pos - r0.current_pos)
 
@@ -221,8 +228,8 @@ class Simulator:
         total_jobs = len(self.jobs)
         L = self.starting_pos[1] - 1  # Number of locations
         makespan = 0
-        print(f"--- Time step {makespan} ---")
-        print(
+        self.log(f"--- Time step {makespan} ---")
+        self.log(
             f"Robots are at starting positions: {self.starting_pos[0]}, {self.starting_pos[1]}"
         )
         self.assign_job(r0)
@@ -230,7 +237,7 @@ class Simulator:
         while len(self.jobs) > 0 or r0.going_home or r1.going_home:
 
             makespan += 1
-            print(f"--- Time step {makespan} ---")
+            self.log(f"--- Time step {makespan} ---")
 
             if self.check_distance(r0, r1) == 0:
                 finished_jobs = total_jobs - len(self.jobs)
@@ -254,7 +261,12 @@ class Simulator:
 if __name__ == "__main__":
     products, robot_starting_pos = load_environment("data.txt")
 
-    sim = Simulator(solution=S, starting_pos=robot_starting_pos)
+    sim = Simulator(solution=S, starting_pos=robot_starting_pos, verbose=False)
     sim.schedule_jobs(products)
+
+    start = time.perf_counter()
     fitness = sim.simulation()
+    end_time = time.perf_counter()
+
+    print(end_time - start, "seconds")
     print(f"Simulation completed in {fitness} time steps.")
