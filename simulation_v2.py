@@ -6,7 +6,11 @@ S = [
     [0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0],   # index = product_id - 1, value = robot_id
     [7, 8, 4, 1, 11, 10, 9, 5, 2, 6, 12, 3] # index = pickup sequence, value = product_id
 ]
-
+S1= [
+    [6, 2, 9],
+    [0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1],
+    [1, 5, 10, 12, 6, 8, 2, 3, 4, 7, 11, 9]
+]
 @dataclass(frozen=True)
 class Product:
     product_id: int
@@ -92,7 +96,6 @@ def noop(*args, **kwargs):
     pass
 
 #--------------- Simulation class ----------------#
-
 
 class Simulator:
     def __init__(self, solution: List[List[int]], starting_pos: List[int], policy: str = "default", verbose=False):
@@ -261,7 +264,7 @@ class Simulator:
 if __name__ == "__main__":
     products, robot_starting_pos = load_environment("data.txt")
 
-    sim = Simulator(solution=S, starting_pos=robot_starting_pos, verbose=False)
+    sim = Simulator(solution=S1, starting_pos=robot_starting_pos, verbose=True)
     sim.schedule_jobs(products)
 
     start = time.perf_counter()
