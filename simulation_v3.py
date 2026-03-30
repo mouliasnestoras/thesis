@@ -6,22 +6,18 @@ S = [
     [0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0],   # index = product_id - 1, value = robot_id
     [7, 8, 4, 1, 11, 10, 9, 5, 2, 6, 12, 3] # index = pickup sequence, value = product_id
 ]
-S1= [
-    [6, 2, 9],
-    [0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1],
-    [1, 5, 10, 12, 6, 8, 2, 3, 4, 7, 11, 9]
-]
-
-S2 = [
-    [1, 7, 2, 3, 4, 5, 15],
-    [1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    [20, 21, 8, 23, 16, 7, 3, 22, 2, 19, 25, 11, 5, 17, 9, 14, 18, 10, 4, 15, 26, 24, 1, 13, 12, 6, 27, 28]
-]
 S3 = [
     [6, 3, 9],
     [0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1],
     [4, 11, 9, 8, 3, 1, 7, 2, 12, 10, 5, 6]
 ]
+
+S4 = [
+    [2, 3, 4, 5, 1, 16, 6],# pallet locations
+    [0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1],# index = product_id - 1, value = robot_id
+    [7, 17, 16, 8, 2, 3, 4, 5, 25, 11, 14, 13, 26, 12, 18, 6, 1, 10, 27, 23, 28, 15, 20, 9, 22, 21, 24, 19]# index = pickup sequence, value = product_id
+]
+
 @dataclass(frozen=True)
 class Product:
     product_id: int
@@ -49,6 +45,7 @@ class Robot:
     current_pos: int
     loaded: int = 0
     priority: bool = True
+    memic: int =0
     current_job: Optional[Job] = None
     going_home: bool = False
 
@@ -180,9 +177,8 @@ class Simulator:
             return
 
         if robot.priority is False:
-            if robot.current_pos != self.starting_pos[robot.id]:
-                robot.current_pos +=1 if robot.id == 1 else -1
-                self.log(f"Robot {robot.id} moves {'right' if robot.id ==1 else 'left'} to position {robot.current_pos} (yielding priority)")
+            robot.current_pos += robot.memic # direction of other robot -> Positive(+1), Negative(-1), Neutral(0)
+            self.log(f"Robot {robot.id} yields to position {robot.current_pos}")
         elif job.destination[robot.loaded] > robot.current_pos:
             robot.current_pos += 1
             self.log(f"Robot {robot.id} moves right to position {robot.current_pos}")
@@ -210,38 +206,112 @@ class Simulator:
         if robot.current_pos < starting_pos:
             robot.current_pos += 1
             self.log(f"Robot {robot.id}: moves right to position {robot.current_pos} (going home)")
+            if robot.current_pos == starting_pos:
+                robot.going_home = False
+                self.log(f"Robot {robot.id}: reached home position {robot.current_pos}")
         elif robot.current_pos > starting_pos:
             robot.current_pos -= 1
             self.log(f"Robot {robot.id}: moves left to position {robot.current_pos} (going home)")
-        else:
-            robot.going_home = False
-            self.log(f"Robot {robot.id}: reached home position {robot.current_pos}")
+            if robot.current_pos == starting_pos:
+                robot.going_home = False
+                self.log(f"Robot {robot.id}: reached home position {robot.current_pos}")
 
     def check_distance(self, r0: Robot, r1: Robot) -> int:
-        if self.policy == "default":
-            return abs(r1.current_pos - r0.current_pos)
-        elif abs(r1.current_pos - r0.current_pos) == 1:
-            r1.priority = False
         return abs(r1.current_pos - r0.current_pos)
-
+        
     def evaluate_penalty(self, total_jobs: int, finished_jobs: int, total_tu: int, L: int) -> int:
         big_penalty = L * total_jobs
         penalty_per_job = 10
         penalty_per_tu = 1
 
         unfinished_jobs = total_jobs - finished_jobs
-        penalty = big_penalty + (penalty_per_job * unfinished_jobs) + (penalty_per_tu * (total_tu - 1))
-        self.log(f"penalty = {L}*{total_jobs} + ({penalty_per_job} * {unfinished_jobs}) + ({penalty_per_tu} * {total_tu - 1}) = {penalty}")
+        penalty = big_penalty + (penalty_per_job * unfinished_jobs) + (penalty_per_tu * total_tu)
+        self.log("Colision detected! Evaluating penalty:")
+        self.log(f"penalty = {L}*{total_jobs} + ({penalty_per_job} * {unfinished_jobs}) + ({penalty_per_tu} * {total_tu}) = {penalty}")
         return penalty
 
-    def simulation(self) -> int:
+    def direction(self, robot: Robot) -> int:
+        job = robot.current_job
+
+        if job is None:
+            return 0
+        elif job.destination[robot.loaded] > robot.current_pos:
+            return 1
+        elif job.destination[robot.loaded] < robot.current_pos:
+            return -1
+        else:
+            return 0
+
+    def approach(self, r0: Robot, r1: Robot) -> int:
+        r0_dir = self.direction(r0)
+        r1_dir = self.direction(r1)
+
+        danger_case = {
+            (1, -1): 1, # -> <-
+            (1, 0): 2,  #-> _
+            (0, -1): 3  # _ <-
+        }
+        return danger_case.get((r0_dir, r1_dir), 4) # 4 means no danger
+
+    def manage_colision(self, r0: Robot, r1: Robot) -> bool:
+        distance = r1.current_pos - r0.current_pos
+        scenario = self.approach(r0, r1)
+        if distance == 2 and scenario == 1:
+            self.calculate_priority(r0, r1, True)
+            self.log("Scenario 1: -> <-, distance = 2")
+            return True
+        elif distance == 1 and scenario == 1:
+            self.calculate_priority(r0, r1, False)
+            self.log("Scenario 2: -> <-, distance = 1")
+            return True
+        elif distance == 1 and scenario == 2:
+            r0.priority = False
+            r0.memic = self.direction(r1)
+            r1.priority = True
+            self.log("Scenario 3: -> _, distance = 1")
+            return True
+        elif distance == 1 and scenario == 3:
+            r0.priority = True
+            r1.priority = False
+            r1.memic = self.direction(r0)
+            self.log("Scenario 4: _ <-, distance = 1")
+            return True
+        else:
+            r0.priority = True
+            r1.priority = True
+            return False
+            
+    def calculate_priority(self, r0: Robot, r1: Robot, stand: bool = False):
+        if r0.loaded == 1 and r1.loaded == 0:
+            r0.priority = True
+            r1.priority = False
+            r1.memic = self.direction(r0) if not stand else 0
+            self.log("Priority: R0 loaded, R1 empty")
+        elif r0.loaded == 0 and r1.loaded == 1:
+            r1.priority = True
+            r0.priority = False
+            r0.memic = self.direction(r1) if not stand else 0
+            self.log("Priority: R1 loaded, R0 empty")
+        else:
+            if abs(r0.current_job.destination[r0.loaded] - r0.current_pos) < abs(r1.current_job.destination[r1.loaded] - r1.current_pos):
+                r0.priority = True
+                r1.priority = False
+                r1.memic = self.direction(r0) if not stand else 0
+                self.log("Priority: R0 closer to destination")
+            elif abs(r0.current_job.destination[r0.loaded] - r0.current_pos) > abs(r1.current_job.destination[r1.loaded] - r1.current_pos):
+                r1.priority = True
+                r0.priority = False
+                r0.memic = self.direction(r1) if not stand else 0
+                self.log("Priority: R1 closer to destination")
+
+    def simulation2(self) -> int:
         r0 = Robot(id=0, current_pos=self.starting_pos[0])
         r1 = Robot(id=1, current_pos=self.starting_pos[1])
 
         total_jobs = len(self.jobs)
         L = self.starting_pos[1] - 2  # Number of locations - 2 parking spots
         makespan = 0
-        is_valid = True
+        colision = False
 
         self.log(f"--- Time step {makespan} ---")
         self.log(
@@ -249,47 +319,36 @@ class Simulator:
         )
         self.assign_job(r0)
         self.assign_job(r1)
-        while len(self.jobs) > 0 or r0.going_home or r1.going_home:
-            
-            if self.check_distance(r0, r1) == 0:
+        while len(self.jobs) > 0 or r0.going_home or r1.going_home:                  
+            colision = self.manage_colision(r0, r1)
+            if self.policy =="default" and colision == True:
                 finished_jobs = total_jobs - len(self.jobs)
-                is_valid = False
-                return self.evaluate_penalty(total_jobs, finished_jobs, makespan, L) , is_valid
-            
+                return self.evaluate_penalty(total_jobs, finished_jobs, makespan, L) , False
+
             makespan += 1
             self.log(f"--- Time step {makespan} ---")
 
         # Robot 0 event
-            if self.check_distance(r0, r1) == 0:
-                finished_jobs = total_jobs - len(self.jobs)
-                is_valid = False
-                return self.evaluate_penalty(total_jobs, finished_jobs, makespan, L) , is_valid
             if r0.going_home:
                 self.go_home(r0)
             else:
                 self.robot_event(r0)
-
         # Robot 1 event
-            if self.check_distance(r0, r1) == 0:
-                finished_jobs = total_jobs - len(self.jobs)
-                is_valid = False
-                return self.evaluate_penalty(total_jobs, finished_jobs, makespan, L) , is_valid
             if r1.going_home:
                 self.go_home(r1)
             else:
                 self.robot_event(r1)
-
-        return makespan , is_valid
-
+                
+        return makespan , True
 
 if __name__ == "__main__":
-    products, robot_starting_pos, orders = load_environment("data.txt")
+    products, robot_starting_pos, orders = load_environment("instances/data_1.txt")
 
-    sim = Simulator(solution=S3, starting_pos=robot_starting_pos, verbose=True)
+    sim = Simulator(solution=S4, starting_pos=robot_starting_pos, verbose=True, policy="priority")
     sim.schedule_jobs(products)
 
     start = time.perf_counter()
-    fitness , is_valid = sim.simulation()
+    fitness , is_valid = sim.simulation2()
     end_time = time.perf_counter()
 
     print(end_time - start, "seconds")

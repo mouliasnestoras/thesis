@@ -153,14 +153,28 @@ def main():
 
     # Choose instance parameters 
     inst_params = InstanceParams(
-        num_locations_param=NormalIntParam(mean=10, std=2, min_val=10, max_val=20),
-        num_belts_param=NormalIntParam(mean=3, std=0.5, min_val=1, max_val=6),
-        num_orders_param=NormalIntParam(mean=3, std=1, min_val=1, max_val=5),
+        num_locations_param=NormalIntParam(mean=19, std=2, min_val=15, max_val=25),
+        num_belts_param=NormalIntParam(mean=4, std=0.5, min_val=1, max_val=6),
+        num_orders_param=NormalIntParam(mean=4, std=1, min_val=1, max_val=5),
         order_length_param=NormalIntParam(mean=4, std=0.5, min_val=1, max_val=5),
     )
 
+    inst_params1 = InstanceParams(
+        num_locations_param=NormalIntParam(mean=40, std=8, min_val=20, max_val=80),
+        num_belts_param=NormalIntParam(mean=8, std=2, min_val=4, max_val=15),
+        num_orders_param=NormalIntParam(mean=20, std=5, min_val=10, max_val=40),
+        order_length_param=NormalIntParam(mean=10, std=3, min_val=5, max_val=20),
+    )
 
-    num_easy = 5
+    inst_params2 = InstanceParams(
+        num_locations_param=NormalIntParam(mean=18, std=3, min_val=12, max_val=30),
+        num_belts_param=NormalIntParam(mean=5, std=1, min_val=2, max_val=8),
+        num_orders_param=NormalIntParam(mean=8, std=2, min_val=4, max_val=15),
+        order_length_param=NormalIntParam(mean=6, std=1, min_val=3, max_val=10),
+    )
+
+
+    num_easy = 2
 
     # Generate instances
     for i in range(1, num_easy + 1):
@@ -173,6 +187,6 @@ def main():
 
 
 if __name__ == "__main__":
-    #main()
+    main()
     # Uncomment the following line to delete all generated instances:
-    clear_all()
+    #clear_all()
