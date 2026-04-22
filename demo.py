@@ -1,5 +1,5 @@
 """
-Twin Robot Warehouse Simulation — Visual Demo
+Twin Robot System Simulation — Visual Demo
 ---------------------------------------------
 Runs the simulation directly (no log file needed).
 State snapshots are captured in-memory during the run.
@@ -18,24 +18,33 @@ import sys
 from dataclasses import dataclass
 from typing import List, Optional
 
-# ═══════════════════════════════════════════════════════════════════
-#  CONFIG — edit these to change scenario
-# ═══════════════════════════════════════════════════════════════════
 
-DATA_FILE = "instances/data_1.txt" # instances/data_1.txt | instances/data_2.txt
-# makespan = 97
+DATA_FILE = "dataset/instance_l20_n30_1.txt" # instances/data_1.txt | instances/data_2.txt | dataset/instance_l20_n30_1.txt
+# makespan = 86 for data_1 with priority policy
+
+S8 =[[12, 7, 1, 11, 14, 2, 16, 5, 13, 9],
+[1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 1],
+[21, 25, 24, 5, 13, 6, 9, 19, 27, 7, 11, 30, 12, 4, 15, 29, 18, 10, 28, 22, 2, 26, 14, 16, 20, 17, 3, 1, 23, 8]]
+
+
+S = [
+    [4, 2, 8],                             # pallet locations
+    [0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0],   # index = product_id - 1, value = robot_id
+    [7, 8, 4, 1, 11, 10, 9, 5, 2, 6, 12, 3] # index = pickup sequence, value = product_id
+]
+S3 = [
+    [6, 3, 9],
+    [0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1],
+    [4, 11, 9, 8, 3, 1, 7, 2, 12, 10, 5, 6]
+]
+
 S4 = [
-    [4, 3, 7, 1, 5, 14, 2],
-    [0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1],
-    [15, 17, 25, 27, 19, 21, 8, 7, 2, 22, 18, 6, 4, 1, 10, 11, 24, 13, 14, 20, 16, 28, 3, 12, 9, 26, 23, 5],
-]
-S5 = [
-    [3, 16, 14, 11],
-    [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1],
-    [15, 8, 11, 14, 7, 3, 5, 1, 16, 9, 12, 13, 4, 10, 2, 6]
+    [2, 3, 4, 5, 1, 16, 6],
+    [0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1],
+    [7, 17, 16, 8, 2, 3, 4, 5, 25, 11, 14, 13, 26, 12, 18, 6, 1, 10, 27, 23, 28, 15, 20, 9, 22, 21, 24, 19]
 ]
 
-SOLUTION = S4
+SOLUTION = S8
 POLICY   = "priority"   # "default" | "priority"
 
 
@@ -181,11 +190,13 @@ class Simulator:
 
     def robot_event(self, robot: Robot):
         job = robot.current_job
-        if job is None:
-            return
-        if not robot.priority:
-            robot.current_pos += robot.memic
+
+        if robot.priority is False:
+            robot.current_pos += robot.memic  # direction of other robot -> +1, -1, or 0
             self._log(f"Robot {robot.id} yields to position {robot.current_pos}")
+
+        elif job is None:
+            return
         elif job.destination[robot.loaded] > robot.current_pos:
             robot.current_pos += 1
             self._log(f"Robot {robot.id} moves right to position {robot.current_pos}")
@@ -208,54 +219,72 @@ class Simulator:
                 self.assign_job(robot)
 
     def go_home(self, robot: Robot):
-        sp = self.starting_pos[robot.id]
-        if robot.current_pos < sp:
+        starting_pos = self.starting_pos[robot.id]
+        if robot.current_pos < starting_pos:
             robot.current_pos += 1
             self._log(f"Robot {robot.id}: moves right to position {robot.current_pos} (going home)")
-            if robot.current_pos == sp:
+            if robot.current_pos == starting_pos:
                 robot.going_home = False
                 self._log(f"Robot {robot.id}: reached home position {robot.current_pos}")
-        elif robot.current_pos > sp:
+        elif robot.current_pos > starting_pos:
             robot.current_pos -= 1
             self._log(f"Robot {robot.id}: moves left to position {robot.current_pos} (going home)")
-            if robot.current_pos == sp:
+            if robot.current_pos == starting_pos:
                 robot.going_home = False
                 self._log(f"Robot {robot.id}: reached home position {robot.current_pos}")
+        else:
+            robot.going_home = False
+            self._log(f"Robot {robot.id}: already at home position {robot.current_pos}")
 
     def direction(self, robot: Robot) -> int:
         job = robot.current_job
         if job is None:
-            return 0
+            return -1 if robot.id == 0 else 1  # Robot 0 goes right, Robot 1 goes left when idle
         elif job.destination[robot.loaded] > robot.current_pos:
             return 1
         elif job.destination[robot.loaded] < robot.current_pos:
             return -1
-        return 0
+        else:
+            return 0
 
-    def approach(self, r0, r1) -> int:
-        r0d, r1d = self.direction(r0), self.direction(r1)
-        return {(1, -1): 1, (1, 0): 2, (0, -1): 3}.get((r0d, r1d), 4)
+    def approach(self, r0: Robot, r1: Robot) -> int:
+        r0_dir = self.direction(r0)
+        r1_dir = self.direction(r1)
 
-    def calculate_priority(self, r0, r1, stand=False):
+        danger_case = {
+            (1, -1): 1,  # -> <-
+            (1, 0): 2,   # -> _
+            (0, -1): 3   # _ <-
+        }
+        return danger_case.get((r0_dir, r1_dir), 4)  # 4 means no danger
+
+    def calculate_priority(self, r0: Robot, r1: Robot, stand: bool = False):
         if r0.loaded == 1 and r1.loaded == 0:
-            r0.priority = True; r1.priority = False
+            r0.priority = True
+            r1.priority = False
             r1.memic = self.direction(r0) if not stand else 0
             self._log("Priority: R0 loaded, R1 empty")
         elif r0.loaded == 0 and r1.loaded == 1:
-            r1.priority = True; r0.priority = False
+            r1.priority = True
+            r0.priority = False
             r0.memic = self.direction(r1) if not stand else 0
             self._log("Priority: R1 loaded, R0 empty")
         else:
-            d0 = abs(r0.current_job.destination[r0.loaded] - r0.current_pos)
-            d1 = abs(r1.current_job.destination[r1.loaded] - r1.current_pos)
-            if d0 < d1:
-                r0.priority = True; r1.priority = False
+            if abs(r0.current_job.destination[r0.loaded] - r0.current_pos) < abs(r1.current_job.destination[r1.loaded] - r1.current_pos):
+                r0.priority = True
+                r1.priority = False
                 r1.memic = self.direction(r0) if not stand else 0
                 self._log("Priority: R0 closer to destination")
-            elif d0 > d1:
-                r1.priority = True; r0.priority = False
+            elif abs(r0.current_job.destination[r0.loaded] - r0.current_pos) > abs(r1.current_job.destination[r1.loaded] - r1.current_pos):
+                r1.priority = True
+                r0.priority = False
                 r0.memic = self.direction(r1) if not stand else 0
                 self._log("Priority: R1 closer to destination")
+            else: # if both are equally close, we can choose to let the robot with the lower ID go first
+                r0.priority = True
+                r1.priority = False
+                r1.memic = self.direction(r0) if not stand else 0
+                self._log("Priority: Both robots equally close, Robot 0 goes first")
 
     def manage_collision(self, r0, r1) -> bool:
         distance = r1.current_pos - r0.current_pos
@@ -281,7 +310,14 @@ class Simulator:
             return False
 
     def evaluate_penalty(self, total_jobs, finished_jobs, total_tu, L) -> int:
-        return L * total_jobs + 10 * (total_jobs - finished_jobs) + total_tu
+        # big_penalty = L * total_jobs   # commented out in simulation_v3
+        penalty_per_job = 10
+        penalty_per_tu = 1
+        unfinished_jobs = total_jobs - finished_jobs
+        penalty = (penalty_per_job * unfinished_jobs) + (penalty_per_tu * total_tu)
+        self._log("Colision detected! Evaluating penalty:")
+        self._log(f"penalty = ({penalty_per_job} * {unfinished_jobs}) + ({penalty_per_tu} * {total_tu}) = {penalty}")
+        return penalty
 
     def run(self):
         """Run full simulation; return (snapshots, makespan_or_penalty, is_valid)."""
@@ -358,7 +394,7 @@ class SimApp(tk.Tk):
     def __init__(self, n_locations, belts, pallet_locations, states,
                  starting_pos, makespan, is_valid):
         super().__init__()
-        self.title("Twin Robot Warehouse Simulator")
+        self.title("Twin Robot System Simulator")
         self.configure(bg=BG)
         self.resizable(False, False)
 
@@ -392,7 +428,7 @@ class SimApp(tk.Tk):
         # header
         hdr = tk.Frame(self, bg=BG)
         hdr.pack(fill="x", padx=16, pady=(12, 0))
-        tk.Label(hdr, text="⬡ TWIN ROBOT WAREHOUSE", font=self.f_title,
+        tk.Label(hdr, text="⬡ TWIN ROBOT SYSTEM", font=self.f_title,
                  bg=BG, fg=TEXT_COL).pack(side="left")
         status_col = PALLET_ACC if self.is_valid else "#ff1744"
         status_txt = (f"✓ VALID  makespan={self.makespan}" if self.is_valid
@@ -441,11 +477,11 @@ class SimApp(tk.Tk):
                  font=self.f_label).grid(row=0, column=3, padx=(20, 4))
         self.speed_var = tk.IntVar(value=300)
         tk.Scale(ctrl, from_=50, to=1000, orient="horizontal",
-                 variable=self.speed_var, bg=BG, fg=TEXT_COL,
-                 troughcolor=GRID_LINE, highlightthickness=0,
-                 sliderrelief="flat", length=120,
-                 command=lambda v: setattr(self, "_speed", int(v))
-                 ).grid(row=0, column=4, padx=4)
+            variable=self.speed_var, bg=BG, fg=TEXT_COL,
+            troughcolor=GRID_LINE, highlightthickness=0,
+            sliderrelief="flat", length=120,
+            command=lambda v: setattr(self, "_speed", 1050 - int(v))
+            ).grid(row=0, column=4, padx=4)
 
         # scrubber
         self.scrub_var = tk.IntVar(value=0)

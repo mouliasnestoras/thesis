@@ -9,17 +9,15 @@ from simulation_v2 import Simulator, load_environment
 from simulation_v3 import Simulator as SimulatorV3
 
 # -- DEAP creator classes (declared once at module level) -----------------
-# Guarded so re-imports (e.g. from a runner script) do not raise.
+# Guarded so re-imports (e.g. from a runner script that also imports GA.py)
+# do not raise the "class already created" warning/error.
 if not hasattr(creator, "FitnessMin"):
-    creator.create("FitnessMin", base.Fitness, weights=(-1.0, -1.0))  # minimize both validity and makespan
+    creator.create("FitnessMin", base.Fitness, weights=(-1.0, -1.0))
 if not hasattr(creator, "Individual"):
     creator.create("Individual", list, fitness=creator.FitnessMin)
 
 # -- Environment globals ---------------------------------------------------
-# These are populated by run_ga() based on the instance path. Keeping them
-# as module-level globals means the helper functions below (make_individual,
-# objective, custom_mutate, ...) can read them without needing to pass the
-# environment around on every call.
+# Populated by run_ga() based on the instance path.
 products = None
 robot_starting_pos = None
 orders = None
@@ -45,28 +43,21 @@ def make_individual():
 
 def evaluate(ind):
     fitness, is_valid = objective(ind[0], ind[1], ind[2])
-    validity_score = 0 if is_valid else 1  # 0 = valid, 1 = invalid
-    return (validity_score, fitness)  # DEAP minimizes both, validity wins first
+    validity_score = 0 if is_valid else 1
+    return (validity_score, fitness)
 
 
 # -- Crossover ------------------------------------------------
 def cx_s0_pmx(a, b):
-    """
-    PMX crossover for S[0]: a subset-permutation of pallet locations.
-    """
+    """PMX crossover for S[0]: a subset-permutation of pallet locations."""
     a, b = list(a), list(b)
     size = len(a)
-
-    # Pick two crossover points
     cx1, cx2 = sorted(random.sample(range(size), 2))
 
     def pmx_one(p1, p2):
         child = [None] * size
-        # Copy the segment from p1
         child[cx1:cx2] = p1[cx1:cx2]
         segment_vals = set(p1[cx1:cx2])
-
-        # Fill from p2, resolving conflicts via mapping
         for i in list(range(0, cx1)) + list(range(cx2, size)):
             candidate = p2[i]
             while candidate in segment_vals:
@@ -80,16 +71,13 @@ def cx_s0_pmx(a, b):
 
 def custom_crossover(ind1, ind2):
     c1, c2 = ind1, ind2
-    # S[0]
     c1[0], c2[0] = cx_s0_pmx(c1[0], c2[0])
 
-    # S[1]
     tools.cxTwoPoint(c1[1], c2[1])
 
-    # S[2] Ordered Crossover (0-based indexing inside the DEAP op)
     c1[2] = [x - 1 for x in c1[2]]
     c2[2] = [x - 1 for x in c2[2]]
-    tools.cxOrdered(c1[2], c2[2])
+    tools.cxPartialyMatched(c1[2], c2[2])
     c1[2] = [x + 1 for x in c1[2]]
     c2[2] = [x + 1 for x in c2[2]]
 
@@ -109,15 +97,30 @@ def mutate_pallet_locations(locs, max_pallet, indpb=0.2):
     return locs
 
 
-def custom_mutate(ind):
+def custom_mutate(ind, mutpb_s0=1.0, mutpb_s1=1.0, mutpb_s2=1.0):
+    """
+    Per-chromosome mutation with independent rates.
+
+    Each of the three parts has its own probability of being mutated this
+    call. Returns (ind, mutated_flag) so the caller can invalidate fitness
+    only when something actually changed.
+    """
     m = ind
-    # --- S[0]: pallet locations ---
-    m[0] = mutate_pallet_locations(m[0], MAX_PALLET, indpb=0.2)
-    # --- S[1]: robot assignment ---
-    tools.mutUniformInt(m[1], low=0, up=1, indpb=0.4)
-    # --- S[2]: pickup sequence ---
-    tools.mutShuffleIndexes(m[2], indpb=0.2)
-    return (m,)
+    mutated = False
+
+    if random.random() < mutpb_s0:
+        m[0] = mutate_pallet_locations(m[0], MAX_PALLET, indpb=0.3)
+        mutated = True
+
+    if random.random() < mutpb_s1:
+        tools.mutUniformInt(m[1], low=0, up=1, indpb=0.3)
+        mutated = True
+
+    if random.random() < mutpb_s2:
+        tools.mutShuffleIndexes(m[2], indpb=0.3)
+        mutated = True
+
+    return m, mutated
 
 
 # -- Diversity ---------------------------------------------------
@@ -147,6 +150,85 @@ def count_duplicates(pop, distance_threshold=0.05):
     return count
 
 
+def dynamic_protect_frac(n_dupes, pop_size,
+                         frac_high=0.8, frac_low=0.2,
+                         dupe_ratio_trigger=0.40):
+    """Linearly scale protect_top_frac down as duplicates rise."""
+    if pop_size <= 0:
+        return frac_high
+    dupe_ratio = n_dupes / pop_size
+    t = min(1.0, dupe_ratio / dupe_ratio_trigger) if dupe_ratio_trigger > 0 else 1.0
+    return frac_high + (frac_low - frac_high) * t
+
+
+def eliminate_duplicates(pop, distance_threshold=0.05, neighbor_threshold=0.15,
+                         protect_top_frac=0.4):
+    """
+    Fitness-aware crowding elimination.
+
+    When a near-duplicate pair is found, pick as target the one in the denser
+    region (crowding principle), BUT only consider individuals in the bottom
+    `protect_top_frac` of the population. This protects top individuals from
+    being replaced while still targeting over-represented genotypes in the
+    less-fit portion of the population.
+    """
+    n = len(pop)
+    sorted_indices = sorted(range(n), key=lambda i: pop[i].fitness.values)
+
+    protected_cutoff = int(n * protect_top_frac)
+    protected = set(sorted_indices[:protected_cutoff])
+
+    n_mutated = 0
+    already_mutated = set()
+
+    def count_neighbors(idx):
+        c = 0
+        for k in range(n):
+            if k == idx:
+                continue
+            if individual_distance(pop[idx], pop[k]) < neighbor_threshold:
+                c += 1
+        return c
+
+    for k in range(len(sorted_indices) - 1):
+        i = sorted_indices[k]
+        j = sorted_indices[k + 1]
+
+        if i in already_mutated or j in already_mutated:
+            continue
+
+        dist = individual_distance(pop[i], pop[j])
+        if dist < distance_threshold:
+            candidates = [idx for idx in (i, j) if idx not in protected]
+
+            if not candidates:
+                worst_idx = sorted_indices[-1]
+                if worst_idx in already_mutated:
+                    continue
+                target = worst_idx
+            elif len(candidates) == 1:
+                target = candidates[0]
+            else:
+                n_i = count_neighbors(i)
+                n_j = count_neighbors(j)
+                if n_i > n_j:
+                    target = i
+                elif n_j > n_i:
+                    target = j
+                else:
+                    target = j  # tie-break: worse fitness
+
+            # Heavy mutation on S[0] and S[1]
+            pop[target][0] = mutate_pallet_locations(pop[target][0], MAX_PALLET, indpb=0.5)
+            tools.mutUniformInt(pop[target][1], low=0, up=1, indpb=0.5)
+
+            del pop[target].fitness.values
+            already_mutated.add(target)
+            n_mutated += 1
+
+    return n_mutated
+
+
 def population_diversity(pop, n_samples=50):
     """Normalized diversity per field (0=identical, 1=maximally diverse)."""
     n = len(pop)
@@ -166,60 +248,45 @@ toolbox.register("individual", make_individual)
 toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 toolbox.register("evaluate", evaluate)
 toolbox.register("mate", custom_crossover)
-toolbox.register("mutate", custom_mutate)
+# Note: custom_mutate is called directly in the main loop (not via toolbox.mutate)
+# because it takes three per-chromosome rates and returns (ind, mutated_flag).
 toolbox.register("select", tools.selTournament, tournsize=2)
 
 
 # -- Main loop ------------------------------------------------
 def run_ga(instance_path="instances/data_1.txt",
-           pop_size=200, n_gen=300, cxpb=0.9, mutpb=0.03,
+           pop_size=200, n_gen=300, cxpb=0.9,
+           mutpb_s0=0.10, mutpb_s1=0.20, mutpb_s2=0.05,
+           mut_switch_frac=0.3,
            seed=None, verbose=True):
     """
-    Run the baseline GA on the given instance.
+    GA with dynamic fitness-aware crowding and per-chromosome mutation rates.
 
     Parameters
     ----------
     instance_path : str
         Path to the instance file to load via load_environment().
-    pop_size : int
-        Population size.
-    n_gen : int
-        Number of generations.
-    cxpb : float
-        Crossover probability.
-    mutpb : float
-        Mutation probability.
-    seed : int or None
-        Random seed (None for non-deterministic runs).
-    verbose : bool
-        If True, print per-generation statistics and show the final
-        convergence plot. If False, stay completely silent: no prints
-        and no plots. Use verbose=False when calling run_ga() from a
-        batch-runner script (e.g. run_experiments.py).
+    pop_size, n_gen, cxpb : standard GA knobs.
+    mutpb_s0 : probability of mutating S[0] (pallet locations) per individual.
+    mutpb_s1 : probability of mutating S[1] (robot assignment) per individual.
+    mutpb_s2 : probability of mutating S[2] (pickup sequence) per individual.
+    mut_switch_frac : fraction of n_gen after which mutpb_s0/s1 are overridden
+                      to 0.05 (late-stage schedule).
+    seed : int or None — reproducibility.
+    verbose : if True, print per-gen stats + show final plot; if False, silent
+              (use verbose=False inside batch runners).
 
     Returns
     -------
     best_valid : creator.Individual or None
-        Best valid individual found across all generations.
-    pop : list
-        Final population.
-    history : dict
-        Per-generation metrics:
-            "min"           list of min valid makespan per gen (or inf)
-            "avg"           list of avg fitness per gen
-            "div_s0"        list of diversity in S[0] per gen
-            "div_s1"        list of diversity in S[1] per gen
-            "div_s2"        list of diversity in S[2] per gen
-            "duplicates"    list of near-duplicate counts per gen
-            "valid_count"   list of valid-individual counts per gen
+    pop : list (final population)
+    history : dict with per-generation metrics (same keys as baseline GA.py
+              plus "eliminated" and "protect" for diagnostics)
     """
-    # Reproducibility: seeding Python's random also seeds DEAP ops that
-    # rely on it internally.
     if seed is not None:
         random.seed(seed)
 
-    # Load environment into the module-level globals so the DEAP operators
-    # and helpers can see the correct instance data for this run.
+    # Load environment into the module-level globals.
     global products, robot_starting_pos, orders
     global MAX_PALLET, NUM_PRODUCTS, NUM_ORDERS
 
@@ -235,6 +302,8 @@ def run_ga(instance_path="instances/data_1.txt",
     gen_div_s2 = []
     gen_duplicates = []
     gen_valid_count = []
+    gen_eliminated = []
+    gen_protect = []
     best_valid = None
 
     pop = toolbox.population(n=pop_size)
@@ -249,8 +318,8 @@ def run_ga(instance_path="instances/data_1.txt",
         ind.fitness.values = toolbox.evaluate(ind)
 
     if verbose:
-        print(f"{'Gen':>4} | {'Valid':>6} | {'Best':>10} | {'Avg':>10} | {'Div S0':>6} | {'Div S1':>6} | {'Div S2':>6} | {'Dupes':>5}")
-        print("-" * 85)
+        print(f"{'Gen':>4} | {'Valid':>6} | {'Best':>10} | {'Avg':>10} | {'Div S0':>6} | {'Div S1':>6} | {'Div S2':>6} | {'Dupes':>5} | {'Elim':>5} | {'Prot':>5}")
+        print("-" * 105)
 
     for gen in range(1, n_gen + 1):
         # --- 1. Selection ---
@@ -264,10 +333,14 @@ def run_ga(instance_path="instances/data_1.txt",
                 del offspring[i].fitness.values
                 del offspring[i + 1].fitness.values
 
-        # --- 3. Mutation ---
+        # --- 3. Mutation with independent per-chromosome rates ---
+        # Optional: increase mutation rates in later generations
+        if gen > mut_switch_frac * n_gen:
+            mutpb_s0 = 0.05
+            mutpb_s1 = 0.05
         for ind in offspring:
-            if random.random() < mutpb:
-                (ind,) = toolbox.mutate(ind)
+            _, mutated = custom_mutate(ind, mutpb_s0, mutpb_s1, mutpb_s2)
+            if mutated:
                 del ind.fitness.values
 
         # --- 4. Evaluation ---
@@ -289,6 +362,20 @@ def run_ga(instance_path="instances/data_1.txt",
             worst_idx = max(range(len(pop)), key=lambda i: pop[i].fitness.values)
             pop[worst_idx] = copy.deepcopy(best_valid)
 
+        # --- 8. Duplicate elimination with dynamic protection ---
+        pre_dupes = count_duplicates(pop, distance_threshold=0.05)
+        current_protect = dynamic_protect_frac(pre_dupes, len(pop),
+                                               frac_high=0.6, frac_low=0.2,
+                                               dupe_ratio_trigger=0.40)
+        n_eliminated = eliminate_duplicates(pop,
+                                            distance_threshold=0.05,
+                                            protect_top_frac=current_protect)
+
+        # Re-evaluate anything touched by duplicate elimination
+        for ind in pop:
+            if not ind.fitness.valid:
+                ind.fitness.values = toolbox.evaluate(ind)
+
         # --- Stats ---
         record = stats.compile(pop)
         gen_min.append(record['min_makespan'])
@@ -301,11 +388,13 @@ def run_ga(instance_path="instances/data_1.txt",
         gen_div_s1.append(div_s1)
         gen_div_s2.append(div_s2)
         gen_duplicates.append(n_dupes)
+        gen_eliminated.append(n_eliminated)
+        gen_protect.append(current_protect)
 
         if verbose:
-            print(f"{gen:>4} | {record['valid_count']:>6} | {record['min_makespan']:>10.4f} | {record['avg_makespan']:>10.4f} | {div_s0:>6.3f} | {div_s1:>6.3f} | {div_s2:>6.3f} | {n_dupes:>5}")
+            print(f"{gen:>4} | {record['valid_count']:>6} | {record['min_makespan']:>10.4f} | {record['avg_makespan']:>10.4f} | {div_s0:>6.3f} | {div_s1:>6.3f} | {div_s2:>6.3f} | {n_dupes:>5} | {n_eliminated:>5} | {current_protect:>5.2f}")
 
-    # --- Final result (only print/plot if verbose) ---
+    # --- Final result ---
     if verbose:
         print("\n-- Best Valid Individual --")
         if best_valid:
@@ -325,7 +414,7 @@ def run_ga(instance_path="instances/data_1.txt",
         plt.plot(gen_avg, label='Average fitness')
         plt.xlabel('Generation')
         plt.ylabel('Fitness')
-        plt.title('GA convergence')
+        plt.title('GA convergence (crowding + fitness-aware)')
         plt.legend()
         plt.grid(True)
         plt.show()
@@ -338,6 +427,8 @@ def run_ga(instance_path="instances/data_1.txt",
         "div_s2": gen_div_s2,
         "duplicates": gen_duplicates,
         "valid_count": gen_valid_count,
+        "eliminated": gen_eliminated,
+        "protect": gen_protect,
     }
 
     return best_valid, pop, history
@@ -346,9 +437,9 @@ def run_ga(instance_path="instances/data_1.txt",
 # -- CLI entry point -----------------------------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Baseline GA for warehouse scheduling."
+        description="GA with dynamic fitness-aware crowding."
     )
-    parser.add_argument("--instance", type=str, default="instances/data_1.txt",
+    parser.add_argument("--instance", type=str, default="instances/data_1.txt",     # instances/data_1.txt | dataset/instance_l20_n30_1.txt
                         help="Path to the instance file (default: instances/data_1.txt)")
     parser.add_argument("--pop", type=int, default=200,
                         help="Population size (default: 200)")
@@ -356,13 +447,19 @@ if __name__ == "__main__":
                         help="Number of generations (default: 300)")
     parser.add_argument("--cxpb", type=float, default=0.9,
                         help="Crossover probability (default: 0.9)")
-    parser.add_argument("--mutpb", type=float, default=0.03,
-                        help="Mutation probability (default: 0.03)")
+    parser.add_argument("--mutpb-s0", type=float, default=0.40,
+                        help="Mutation rate for S[0] pallet locations (default: 0.10)")
+    parser.add_argument("--mutpb-s1", type=float, default=0.40,
+                        help="Mutation rate for S[1] robot assignment (default: 0.20)")
+    parser.add_argument("--mutpb-s2", type=float, default=0.05,
+                        help="Mutation rate for S[2] pickup sequence (default: 0.05)")
+    parser.add_argument("--mut-switch-frac", type=float, default=0.0,
+                        help="Fraction of n_gen after which the late-stage "
+                             "mutation schedule kicks in (default: 0.3)")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed (default: None = non-deterministic)")
     parser.add_argument("--quiet", action="store_true",
-                        help="Suppress per-generation output and the final plot "
-                             "(equivalent to verbose=False inside run_ga).")
+                        help="Suppress per-generation output and the final plot.")
     args = parser.parse_args()
 
     start = time.perf_counter()
@@ -371,7 +468,10 @@ if __name__ == "__main__":
         pop_size=args.pop,
         n_gen=args.gens,
         cxpb=args.cxpb,
-        mutpb=args.mutpb,
+        mutpb_s0=args.mutpb_s0,
+        mutpb_s1=args.mutpb_s1,
+        mutpb_s2=args.mutpb_s2,
+        mut_switch_frac=args.mut_switch_frac,
         seed=args.seed,
         verbose=not args.quiet,
     )

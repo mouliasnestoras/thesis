@@ -27,14 +27,6 @@ class NormalIntParam:
         return iv
 
 
-@dataclass
-class InstanceParams:
-    num_locations_param: NormalIntParam
-    num_belts_param: NormalIntParam
-    num_orders_param: NormalIntParam
-    order_length_param: NormalIntParam
-
-
 # ------------------ Problem instance ------------------ #
 
 @dataclass
@@ -46,73 +38,127 @@ class ProblemInstance:
     def to_text(self) -> str:
         """Return the instance as a formatted string, matching the desired template."""
         lines = []
-
-        # Number of locations
         lines.append(f"Number of locations:   {self.num_locations}")
-
-        # Belts line: show product types P1, P2, ... and their locations
         belt_labels = [f"P{i+1}" for i in range(len(self.belts))]
         belts_header = ", ".join(belt_labels)
         belts_positions = ", ".join(str(b) for b in self.belts)
         lines.append(f"Belts {belts_header}:   {belts_positions}")
-
-        # Orders: product types as plain integers (1, 2, 3, ...)
         for i, order in enumerate(self.orders, start=1):
             order_str = ", ".join(str(p) for p in order)
             lines.append(f"Order O{i}:   {order_str}")
-
         return "\n".join(lines)
 
 
-# ------------------ Generator functions ------------------ #
+# ------------------ Normal-distribution parameter factories ------------------ #
+
+def get_num_belts_param(l: int) -> NormalIntParam:
+    """Normal distribution for the number of belts (product types), depending on l."""
+    if l <= 10:
+        return NormalIntParam(mean=4.0, std=0.8, min_val=3, max_val=min(6, l - 2))
+    elif l <= 20:
+        return NormalIntParam(mean=6.0, std=1.0, min_val=4, max_val=8)
+    else:
+        return NormalIntParam(mean=6.0, std=1.5, min_val=3, max_val=min(10, l - 2))
+
+
+def get_num_orders_param(l: int, n: int, num_belts: int) -> NormalIntParam:
+    """Normal distribution for the number of orders, respecting hard constraints."""
+    # hard cap: must fit in remaining pallet positions AND not exceed n
+    max_orders = max(1, min(l - num_belts, n))
+    if l <= 10:
+        mean = min(4.0, float(max_orders))
+        std = 1.5
+    elif l <= 20:
+        mean = min(8.0, float(max_orders))
+        std = 2.5
+    else:
+        mean = min(12.0, float(max_orders))
+        std = 3.0
+    min_orders = min(2, max_orders)
+    return NormalIntParam(mean=mean, std=std, min_val=min_orders, max_val=max_orders)
+
+
+# ------------------ Generator helpers ------------------ #
 
 def sample_distinct_positions(num_locations: int, num_belts: int, rng: random.Random) -> List[int]:
-    """
-    Choose num_belts distinct positions from internal positions {2, ..., num_locations-1}
-    and return them sorted. Positions 1 and num_locations are forbidden.
-    """
+    """Choose num_belts distinct internal positions (not the two extremes), sorted."""
     if num_locations <= 2:
         raise ValueError("num_locations must be > 2 to have internal positions.")
-    internal_positions = list(range(1, num_locations-1))  # 2..num_locations-1
-
+    internal_positions = list(range(1, num_locations - 1))
     if num_belts > len(internal_positions):
         raise ValueError("num_belts cannot exceed number of internal positions.")
-
     rng.shuffle(internal_positions)
-    chosen = sorted(internal_positions[:num_belts])
-    return chosen
+    return sorted(internal_positions[:num_belts])
 
 
-def generate_instance(params: InstanceParams, rng: random.Random) -> ProblemInstance:
+def partition_jobs_normal(n: int, num_orders: int, rng: random.Random,
+                          std_ratio: float = 0.35) -> List[int]:
     """
-    Generate a single problem instance using the given parameters
-    and random number generator.
+    Partition n jobs into num_orders parts using a Normal distribution.
+    Each part is sampled from N(n/num_orders, std_ratio * n/num_orders),
+    clipped to >= 1, then the sizes are adjusted so that the total equals n exactly.
     """
+    if num_orders > n:
+        raise ValueError("Cannot have more orders than jobs.")
 
-    # 1. Number of locations
-    num_locations = params.num_locations_param.sample(rng)
+    mean = n / num_orders
+    std = max(0.5, std_ratio * mean)  # avoid degenerate std
 
-    # 2. Max number of belts allowed (internal positions only)
-    max_internal_positions = max(0, num_locations - 2)
-    if max_internal_positions == 0:
-        raise ValueError("No internal positions available for belts.")
-
-    # 3. Number of belts (cannot exceed internal positions)
-    num_belts = params.num_belts_param.sample(rng)
-    if num_belts > max_internal_positions:
-        num_belts = max_internal_positions
-
-    # 4. Belt positions along the line (2..num_locations-1)
-    belts = sample_distinct_positions(num_locations, num_belts, rng)
-
-    # 5. Number of orders
-    num_orders = params.num_orders_param.sample(rng)
-
-    # 6. Orders: each order is a sequence of product types (1..num_belts)
-    orders: List[List[int]] = []
+    # Initial normal samples (each >= 1)
+    sizes = []
     for _ in range(num_orders):
-        length = params.order_length_param.sample(rng)
-        order = [rng.randint(1, num_belts) for _ in range(length)]
+        val = rng.gauss(mean, std)
+        iv = max(1, int(round(val)))
+        sizes.append(iv)
+
+    # Adjust the total to be exactly n, while keeping every size >= 1
+    diff = n - sum(sizes)
+    while diff != 0:
+        if diff > 0:
+            idx = rng.randint(0, num_orders - 1)
+            sizes[idx] += 1
+            diff -= 1
+        else:
+            candidates = [i for i, s in enumerate(sizes) if s > 1]
+            if not candidates:
+                break
+            idx = rng.choice(candidates)
+            sizes[idx] -= 1
+            diff += 1
+
+    return sizes
+
+
+def generate_instance_fixed(l: int, n: int, rng: random.Random) -> ProblemInstance:
+    """
+    Generate a TRPASP instance with fixed l rail locations and n total jobs.
+    All random quantities (num_belts, num_orders, order sizes) are drawn
+    from Normal distributions, then clipped to feasible ranges.
+    """
+    num_locations = l
+
+    # --- Number of belts ~ Normal ---
+    num_belts_param = get_num_belts_param(l)
+    num_belts = num_belts_param.sample(rng)
+    max_internal = l - 2
+    if num_belts > max_internal:
+        num_belts = max_internal
+
+    # --- Belt positions (uniform over internal rail positions) ---
+    belts = sample_distinct_positions(l, num_belts, rng)
+
+    # --- Number of orders ~ Normal ---
+    num_orders_param = get_num_orders_param(l, n, num_belts)
+    num_orders = num_orders_param.sample(rng)
+
+    # --- Order sizes ~ Normal, corrected to sum = n ---
+    order_sizes = partition_jobs_normal(n, num_orders, rng)
+
+    # --- Product types per job: uniform over {1..num_belts}
+    # (categorical label; normal distribution is not meaningful here) ---
+    orders: List[List[int]] = []
+    for size in order_sizes:
+        order = [rng.randint(1, num_belts) for _ in range(size)]
         orders.append(order)
 
     return ProblemInstance(num_locations=num_locations, belts=belts, orders=orders)
@@ -122,16 +168,12 @@ def generate_instance(params: InstanceParams, rng: random.Random) -> ProblemInst
 
 def write_instance_to_file(instance: ProblemInstance, filepath: str) -> None:
     """Write a single instance to a .txt file."""
-    text = instance.to_text()
     with open(filepath, "w", encoding="utf-8") as f:
-        f.write(text)
+        f.write(instance.to_text())
 
 
-def clear_all(directory: str = "instances") -> None:
-    """
-    Delete all .txt files from the given directory.
-    If the directory does not exist, nothing happens.
-    """
+def clear_all(directory: str = "dataset") -> None:
+    """Delete all .txt files from the given directory."""
     if not os.path.isdir(directory):
         return
     for name in os.listdir(directory):
@@ -141,49 +183,34 @@ def clear_all(directory: str = "instances") -> None:
                 os.remove(full_path)
 
 
-# ------------------ Example: generate a suite ------------------ #
+# ------------------ Generate the test suite ------------------ #
 
 def main():
-    rng = random.Random()  
+    # Fixed seed for reproducibility (set to None for fully random)
+    rng = random.Random()
 
-    # Output folder (will be created if it does not exist)
-    output_dir = "instances"
+    output_dir = "dataset"
     os.makedirs(output_dir, exist_ok=True)
 
+    # --- Test suite parameters (matching the paper) ---
+    l_values = [10, 20]                 # rail locations
+    n_values = [20, 60, 100]            # total number of jobs
+    instances_per_pair = 5              # 5 instances per (l, n) pair -> 30 total
 
-    # Choose instance parameters 
-    inst_params = InstanceParams(
-        num_locations_param=NormalIntParam(mean=19, std=2, min_val=15, max_val=25),
-        num_belts_param=NormalIntParam(mean=4, std=0.5, min_val=1, max_val=6),
-        num_orders_param=NormalIntParam(mean=4, std=1, min_val=1, max_val=5),
-        order_length_param=NormalIntParam(mean=4, std=0.5, min_val=1, max_val=5),
-    )
+    total_count = 0
+    for l in l_values:
+        for n in n_values:
+            for k in range(1, instances_per_pair + 1):
+                inst = generate_instance_fixed(l, n, rng)
+                filename = f"instance_l{l}_n{n}_{k}.txt"
+                filepath = os.path.join(output_dir, filename)
+                write_instance_to_file(inst, filepath)
+                total_count += 1
+                print(f"Wrote {filepath}  "
+                      f"(orders={len(inst.orders)}, belts={len(inst.belts)}, "
+                      f"total_jobs={sum(len(o) for o in inst.orders)})")
 
-    inst_params1 = InstanceParams(
-        num_locations_param=NormalIntParam(mean=40, std=8, min_val=20, max_val=80),
-        num_belts_param=NormalIntParam(mean=8, std=2, min_val=4, max_val=15),
-        num_orders_param=NormalIntParam(mean=20, std=5, min_val=10, max_val=40),
-        order_length_param=NormalIntParam(mean=10, std=3, min_val=5, max_val=20),
-    )
-
-    inst_params2 = InstanceParams(
-        num_locations_param=NormalIntParam(mean=18, std=3, min_val=12, max_val=30),
-        num_belts_param=NormalIntParam(mean=5, std=1, min_val=2, max_val=8),
-        num_orders_param=NormalIntParam(mean=8, std=2, min_val=4, max_val=15),
-        order_length_param=NormalIntParam(mean=6, std=1, min_val=3, max_val=10),
-    )
-
-
-    num_easy = 2
-
-    # Generate instances
-    for i in range(1, num_easy + 1):
-        inst = generate_instance(inst_params, rng)
-        filename = f"data_{i}.txt"
-        filepath = os.path.join(output_dir, filename)
-        write_instance_to_file(inst, filepath)
-        print(f"Wrote {filepath}")
-
+    print(f"\nTotal instances generated: {total_count}")
 
 
 if __name__ == "__main__":
